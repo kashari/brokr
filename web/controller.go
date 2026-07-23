@@ -58,3 +58,28 @@ func GetPossibleEvents(ctx *draupnir.Context) {
 	}
 	ctx.JSON(http.StatusOK, events)
 }
+
+// StreamWorkflowInstanceEvents streams every transition event for one workflow
+// instance as Server-Sent Events until the client disconnects. This mirrors
+// draupnir's Router.EVENTSTREAM loop, but the topic is resolved per-request
+// from :id instead of being fixed at route-registration time.
+func StreamWorkflowInstanceEvents(ctx *draupnir.Context, stream *draupnir.SSEStream) {
+	id := ctx.Param("id")
+	sub := engine.EventBus.Subscribe(id)
+	defer engine.EventBus.Unsubscribe(sub)
+
+	done := stream.Done()
+	for {
+		select {
+		case <-done:
+			return
+		case ev, ok := <-sub.C:
+			if !ok {
+				return
+			}
+			if err := stream.Send(ev); err != nil {
+				return
+			}
+		}
+	}
+}

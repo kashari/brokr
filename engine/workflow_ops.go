@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"github.com/google/uuid"
 
 	"github.com/kashari/brokr/config"
@@ -77,9 +79,16 @@ func GetWorkflowInstance(id string) (model.Workflow, error) {
 // - string: The ID of the new current state after processing the event.
 //
 // - error: An error object if an error occurred during processing or if no valid transition was found; otherwise, nil.
-func SendEventToWorkflowInstance(id string, event string) (string, error) {
+func SendEventToWorkflowInstance(id string, event string) (newState string, err error) {
 	db := config.Db
 	var wf persistence.WorkflowInstance
+
+	defer func() {
+		if err == nil {
+			publishTransition(id, event, wf)
+		}
+	}()
+
 	result := db.First(&wf, "id = ?", id)
 	if result.Error != nil {
 		return "", result.Error
@@ -131,7 +140,7 @@ func SendEventToWorkflowInstance(id string, event string) (string, error) {
 		}
 	}
 
-	wf.LastTransition = transition.Event
+	wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", event, currentState.GetId(), wf.CurrentState.GetId())
 
 	db.Save(&wf)
 

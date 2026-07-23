@@ -1,5 +1,16 @@
 package dto
 
+import "github.com/kashari/brokr/model"
+
+// WorkflowTransitionEvent is the payload published to a workflow instance's
+// event stream after each completed transition.
+type WorkflowTransitionEvent struct {
+	WorkflowInstanceId string      `json:"workflowInstanceId"`
+	Event              string      `json:"event"`
+	LastTransition     string      `json:"lastTransition"`
+	CurrentState       model.State `json:"currentState"`
+}
+
 type EventSentResponse struct {
 	WorkflowInstanceId string `json:"workflowInstanceId"`
 	CurrentState       string `json:"currentState"`
