@@ -66,6 +66,16 @@ func interpolate(s string, ctxMap map[string]string) string {
 	return s
 }
 
+// copyContext returns a shallow copy of ctxMap, so an action running in its
+// own goroutine can read/interpolate from it without racing the caller's map.
+func copyContext(ctxMap map[string]string) map[string]string {
+	snapshot := make(map[string]string, len(ctxMap))
+	for k, v := range ctxMap {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
 func executeSetContextMapAction(a *Action, ctxMap map[string]string) (map[string]string, error) {
 	for k, v := range a.Variables {
 		ctxMap[k] = interpolate(v, ctxMap)

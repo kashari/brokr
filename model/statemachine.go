@@ -1,5 +1,7 @@
 package model
 
+import "github.com/kashari/golog"
+
 type Workflow struct {
 	Id                string             `json:"id"`
 	Version           string             `json:"version"`
@@ -63,6 +65,17 @@ type Action struct {
 func (a *Action) Execute(auth string, ctxMap map[string]string) (map[string]string, error) {
 	switch a.Type {
 	case HttpRequestAction:
+		if !a.ExpectResponse {
+			// Nothing will be merged back into ctxMap for this action, so it's
+			// safe to fire it off without blocking the transition on its result.
+			snapshot := copyContext(ctxMap)
+			go func() {
+				if _, err := executeHttpRequestAction(a, snapshot, auth); err != nil {
+					golog.Error("async HTTP action [{}] {} failed: {}", a.Method, a.Url, err.Error())
+				}
+			}()
+			return ctxMap, nil
+		}
 		return executeHttpRequestAction(a, ctxMap, auth)
 	case SetContextMapAction:
 		return executeSetContextMapAction(a, ctxMap)
