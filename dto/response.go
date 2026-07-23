@@ -11,6 +11,14 @@ type WorkflowTransitionEvent struct {
 	CurrentState       model.State `json:"currentState"`
 }
 
+// ChildInstance describes one child workflow instance in a parent's children
+// listing.
+type ChildInstance struct {
+	Id           string      `json:"id"`
+	CurrentState model.State `json:"currentState"`
+	Complete     bool        `json:"complete"`
+}
+
 type EventSentResponse struct {
 	WorkflowInstanceId string `json:"workflowInstanceId"`
 	CurrentState       string `json:"currentState"`

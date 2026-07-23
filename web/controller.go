@@ -59,6 +59,44 @@ func GetPossibleEvents(ctx *draupnir.Context) {
 	ctx.JSON(http.StatusOK, events)
 }
 
+// CreateChildBlueprint creates a new workflow instance as a child of :id.
+func CreateChildBlueprint(ctx *draupnir.Context) {
+	parentId := ctx.Param("id")
+	var bp model.Workflow
+	if err := ctx.BindJSON(&bp); err != nil {
+		ctx.JSON(http.StatusBadRequest, errResp("invalid JSON: "+err.Error()))
+		return
+	}
+	id, err := engine.CreateChildWorkflowInstance(parentId, bp)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusCreated, map[string]string{"id": id.String()})
+}
+
+// GetChildren lists the (non-withdrawn) children of workflow instance :id.
+func GetChildren(ctx *draupnir.Context) {
+	parentId := ctx.Param("id")
+	children, err := engine.GetChildWorkflowInstances(parentId)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, children)
+}
+
+// WithdrawChild soft-deletes child :childId of workflow instance :id.
+func WithdrawChild(ctx *draupnir.Context) {
+	parentId := ctx.Param("id")
+	childId := ctx.Param("childId")
+	if err := engine.WithdrawChildWorkflowInstance(parentId, childId); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]string{"withdrawn": childId})
+}
+
 // StreamWorkflowInstanceEvents streams every transition event for one workflow
 // instance as Server-Sent Events until the client disconnects. This mirrors
 // draupnir's Router.EVENTSTREAM loop, but the topic is resolved per-request

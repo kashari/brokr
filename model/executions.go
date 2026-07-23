@@ -82,3 +82,26 @@ func executeSetContextMapAction(a *Action, ctxMap map[string]string) (map[string
 	}
 	return ctxMap, nil
 }
+
+// executeCreateChildAction spawns a child workflow instance under parentId
+// using a.ChildWorkflow, via the CreateChildWorkflowFunc hook engine wires
+// up. The new child's id is stashed in ctxMap["childWorkflowId"] (if more
+// than one CreateChildWorkflowAction runs in the same batch, later ones
+// overwrite this key).
+func executeCreateChildAction(a *Action, ctxMap map[string]string, parentId string) (map[string]string, error) {
+	if CreateChildWorkflowFunc == nil {
+		return ctxMap, fmt.Errorf("CreateChildWorkflowAction: child workflow creation is not wired up")
+	}
+	if a.ChildWorkflow == nil {
+		return ctxMap, fmt.Errorf("CreateChildWorkflowAction: childWorkflow is required")
+	}
+	childId, err := CreateChildWorkflowFunc(parentId, *a.ChildWorkflow)
+	if err != nil {
+		return ctxMap, fmt.Errorf("create child workflow: %w", err)
+	}
+	if ctxMap == nil {
+		ctxMap = make(map[string]string)
+	}
+	ctxMap["childWorkflowId"] = childId
+	return ctxMap, nil
+}

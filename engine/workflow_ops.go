@@ -32,7 +32,7 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 	wf := &persistence.WorkflowInstance{
 		Id:                 id,
 		WorkflowDefinition: workflowDefinition,
-		CurrentState:       workflowDefinition.States[0],
+		CurrentState:       persistence.StateContainer{State: workflowDefinition.States[0]},
 		LastTransition:     "",
 	}
 	db.Create(wf)
@@ -112,6 +112,16 @@ func SendEventToWorkflowInstance(id string, event string) (newState string, err 
 		return "", &errors.NoTransitionError{CurrentState: currentState.GetId(), Event: event}
 	}
 
+	if transition.Join {
+		complete, joinErr := allChildrenComplete(id)
+		if joinErr != nil {
+			return "", joinErr
+		}
+		if !complete {
+			return "", &errors.ChildrenNotCompleteError{CurrentState: currentState.GetId(), Event: event}
+		}
+	}
+
 	// Execute exit actions of the current state
 	ctxMap, err := currentState.ExecuteExitActions(id, nil)
 	if err != nil {
@@ -121,7 +131,7 @@ func SendEventToWorkflowInstance(id string, event string) (newState string, err 
 	// Update the current state to the target state of the transition
 	for _, state := range wf.WorkflowDefinition.States {
 		if state.GetId() == transition.Target {
-			wf.CurrentState = state
+			wf.CurrentState = persistence.StateContainer{State: state}
 			break
 		}
 	}
