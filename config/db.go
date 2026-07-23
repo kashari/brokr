@@ -22,7 +22,7 @@ func InitDB() {
 		port := getEnv("DB_PORT", "5436")
 		user := getEnv("DB_USER", "misen")
 		password := getEnv("DB_PASSWORD", "root")
-		dbname := getEnv("DB_NAME", "dossier")
+		dbname := getEnv("DB_NAME", "workflow")
 		sslmode := getEnv("DB_SSLMODE", "disable")
 
 		dsn := fmt.Sprintf(

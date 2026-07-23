@@ -59,6 +59,24 @@ func GetWorkflowInstance(id string) (model.Workflow, error) {
 	return wf.WorkflowDefinition, nil
 }
 
+// SendEventToWorkflowInstance processes an event for a specific workflow instance.
+//
+// It retrieves the workflow instance from the database, identifies the current state, and checks for a valid transition
+// based on the provided event. If a valid transition is found, it executes the exit actions of the current state,
+// updates the current state to the target state of the transition, executes the entry actions of the new state,
+// and saves the updated workflow instance back to the database.
+//
+// Parameters:
+//
+// - id: The unique identifier of the workflow instance to which the event is sent.
+//
+// - event: The event to process for the workflow instance.
+//
+// Returns:
+//
+// - string: The ID of the new current state after processing the event.
+//
+// - error: An error object if an error occurred during processing or if no valid transition was found; otherwise, nil.
 func SendEventToWorkflowInstance(id string, event string) (string, error) {
 	db := config.Db
 	var wf persistence.WorkflowInstance
@@ -119,4 +137,25 @@ func SendEventToWorkflowInstance(id string, event string) (string, error) {
 
 	golog.Info("Workflow instance [{}] transitioned to state [{}]", id, wf.CurrentState.GetId())
 	return wf.CurrentState.GetId(), nil
+}
+
+func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
+	db := config.Db
+	var wf persistence.WorkflowInstance
+	result := db.First(&wf, "id = ?", id)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	currentState := wf.CurrentState
+	golog.Info("Getting possible events for workflow instance [{}] in state [{}]", id, currentState.GetId())
+
+	var possibleEvents []string
+	for _, t := range wf.WorkflowDefinition.Transitions {
+		if t.Source == currentState.GetId() {
+			possibleEvents = append(possibleEvents, t.Event)
+		}
+	}
+
+	return possibleEvents, nil
 }

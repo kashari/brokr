@@ -48,3 +48,13 @@ func SendEventToInstance(ctx *draupnir.Context) {
 	}
 	ctx.JSON(http.StatusOK, newState)
 }
+
+func GetPossibleEvents(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	events, err := engine.GetPossibleEventsForWorkflowInstance(id)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, events)
+}
