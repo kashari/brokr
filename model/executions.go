@@ -2,14 +2,30 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
-func executeHttpRequestAction(a *Action, ctxMap map[string]string, authToken string) (map[string]string, error) {
+// httpClient is shared across all outbound HTTP actions so connections are
+// reused (tuned Transport) and a hung downstream can't pin an actor/worker
+// goroutine forever (Timeout). Replaces http.DefaultClient, which had neither.
+var httpClient = &http.Client{
+	Timeout: envDuration("BROKR_HTTP_TIMEOUT_SEC", 30*time.Second),
+	Transport: &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
+func executeHttpRequestAction(ctx context.Context, a *Action, ctxMap map[string]string, authToken string) (map[string]string, error) {
 	url := interpolate(a.Url, ctxMap)
 
 	var body io.Reader
@@ -25,7 +41,7 @@ func executeHttpRequestAction(a *Action, ctxMap map[string]string, authToken str
 		body = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequest(a.Method, url, body)
+	req, err := http.NewRequestWithContext(ctx, a.Method, url, body)
 	if err != nil {
 		return ctxMap, fmt.Errorf("build HTTP request: %w", err)
 	}
@@ -36,7 +52,7 @@ func executeHttpRequestAction(a *Action, ctxMap map[string]string, authToken str
 		req.Header.Set("Authorization", authToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return ctxMap, fmt.Errorf("HTTP action %s %s: %w", a.Method, url, err)
 	}
@@ -56,6 +72,15 @@ func executeHttpRequestAction(a *Action, ctxMap map[string]string, authToken str
 	}
 
 	return ctxMap, nil
+}
+
+func envDuration(key string, defaultValue time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultValue
 }
 
 // interpolate replaces ${varName} placeholders in s with values from ctxMap.

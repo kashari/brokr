@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/kashari/golog"
 	"gorm.io/driver/postgres"
@@ -39,6 +41,19 @@ func InitDB() {
 			panic("failed to connect to database: " + err.Error())
 		}
 
+		// Tune the underlying database/sql pool. With the actor-per-instance
+		// dispatcher, many goroutines hit the DB in parallel; the stdlib default
+		// of 2 idle connections would serialize them into a bottleneck.
+		sqlDB, err := Db.DB()
+		if err != nil {
+			golog.Error("Failed to access underlying sql.DB: {}", err.Error())
+			panic("failed to access sql.DB: " + err.Error())
+		}
+		sqlDB.SetMaxOpenConns(getEnvInt("DB_MAX_OPEN_CONNS", 40))
+		sqlDB.SetMaxIdleConns(getEnvInt("DB_MAX_IDLE_CONNS", 20))
+		sqlDB.SetConnMaxLifetime(time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_SEC", 1800)) * time.Second)
+		sqlDB.SetConnMaxIdleTime(time.Duration(getEnvInt("DB_CONN_MAX_IDLE_SEC", 300)) * time.Second)
+
 		golog.Info("Database connection established successfully")
 	})
 }
@@ -46,6 +61,16 @@ func InitDB() {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			return n
+		}
+		golog.Error("Invalid int for {} ({}), using default {}", key, value, defaultValue)
 	}
 	return defaultValue
 }

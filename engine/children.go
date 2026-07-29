@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"context"
+
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/kashari/brokr/config"
 	"github.com/kashari/brokr/dto"
@@ -18,6 +21,7 @@ func init() {
 		}
 		return id.String(), nil
 	}
+	model.CreateChildWorkflowsFunc = CreateChildWorkflowInstancesBatch
 }
 
 // CreateChildWorkflowInstance creates a new workflow instance linked to
@@ -44,10 +48,38 @@ func CreateChildWorkflowInstance(parentId string, childDefinition model.Workflow
 		WorkflowDefinition: childDefinition,
 		CurrentState:       persistence.StateContainer{State: childDefinition.States[0]},
 	}
+	child.Complete = isEndState(*child)
 	if result := db.Create(child); result.Error != nil {
 		return uuid.Nil, result.Error
 	}
 	return id, nil
+}
+
+// CreateChildWorkflowInstancesBatch creates every child in defs concurrently
+// (independent inserts) and returns their ids in the same order as defs. It
+// backs model.CreateChildWorkflowsFunc, so a transition that spawns several
+// children pays roughly one insert's worth of latency instead of N serial ones.
+func CreateChildWorkflowInstancesBatch(parentId string, defs []model.Workflow) ([]string, error) {
+	if len(defs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(defs))
+	g := new(errgroup.Group)
+	for i := range defs {
+		i := i
+		g.Go(func() error {
+			id, err := CreateChildWorkflowInstance(parentId, defs[i])
+			if err != nil {
+				return err
+			}
+			ids[i] = id.String()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // GetChildWorkflowInstances lists the (non-withdrawn) children of parentId.
@@ -64,7 +96,7 @@ func GetChildWorkflowInstances(parentId string) ([]dto.ChildInstance, error) {
 		instances = append(instances, dto.ChildInstance{
 			Id:           child.Id.String(),
 			CurrentState: child.CurrentState.State,
-			Complete:     isEndState(child),
+			Complete:     child.Complete,
 		})
 	}
 	return instances, nil
@@ -87,23 +119,22 @@ func WithdrawChildWorkflowInstance(parentId, childId string) error {
 	return nil
 }
 
-// allChildrenComplete reports whether every (non-withdrawn) child of
-// parentId has reached one of its own workflow's end states. A parent with
-// no children is vacuously complete.
-func allChildrenComplete(parentId string) (bool, error) {
-	db := config.Db
+// allChildrenComplete reports whether every (non-withdrawn) child of parentId
+// has reached one of its own workflow's end states. A parent with no children
+// is vacuously complete. This is a single SQL count over the persisted
+// Complete flag (set on each transition), so it no longer loads every child's
+// definition jsonb just to scan EndStates in Go. Soft-deleted (withdrawn)
+// children are excluded by GORM's default scope.
+func allChildrenComplete(ctx context.Context, parentId string) (bool, error) {
+	db := config.Db.WithContext(ctx)
 
-	var children []persistence.WorkflowInstance
-	if result := db.Find(&children, "parent_id = ?", parentId); result.Error != nil {
+	var incomplete int64
+	if result := db.Model(&persistence.WorkflowInstance{}).
+		Where("parent_id = ? AND complete = ?", parentId, false).
+		Count(&incomplete); result.Error != nil {
 		return false, result.Error
 	}
-
-	for _, child := range children {
-		if !isEndState(child) {
-			return false, nil
-		}
-	}
-	return true, nil
+	return incomplete == 0, nil
 }
 
 func isEndState(wf persistence.WorkflowInstance) bool {

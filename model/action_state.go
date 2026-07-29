@@ -1,5 +1,7 @@
 package model
 
+import "context"
+
 type ActionState struct {
 	Type           string   `json:"type"`
 	Id             string   `json:"id"`
@@ -45,30 +47,10 @@ func (s *ActionState) GetStatus() string {
 	return s.Status
 }
 
-func (s *ActionState) ExecuteEntryActions(token string, ctxMap map[string]string) (map[string]string, error) {
-	if ctxMap == nil {
-		ctxMap = make(map[string]string)
-	}
-	for _, action := range s.EntryActions {
-		var err error
-		ctxMap, err = action.Execute(token, ctxMap)
-		if err != nil {
-			return ctxMap, err
-		}
-	}
-	return ctxMap, nil
+func (s *ActionState) ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
+	return ExecuteActions(ctx, token, ctxMap, s.EntryActions)
 }
 
-func (s *ActionState) ExecuteExitActions(token string, ctxMap map[string]string) (map[string]string, error) {
-	if ctxMap == nil {
-		ctxMap = make(map[string]string)
-	}
-	for _, action := range s.ExitActions {
-		var err error
-		ctxMap, err = action.Execute(token, ctxMap)
-		if err != nil {
-			return ctxMap, err
-		}
-	}
-	return ctxMap, nil
+func (s *ActionState) ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
+	return ExecuteActions(ctx, token, ctxMap, s.ExitActions)
 }

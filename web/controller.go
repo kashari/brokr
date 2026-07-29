@@ -41,7 +41,20 @@ func GetBlueprint(ctx *draupnir.Context) {
 func SendEventToInstance(ctx *draupnir.Context) {
 	id := ctx.Param("id")
 	event := ctx.Query("event")
-	newState, err := engine.SendEventToWorkflowInstance(id, event)
+
+	// ?async=true enqueues the event and returns 202 immediately; the caller
+	// observes the resulting transition on the SSE stream. Default is the
+	// synchronous path, which blocks until the transition completes.
+	if async, _ := ctx.QueryBool("async"); async {
+		if err := engine.DispatchAsync(id, event); err != nil {
+			ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+			return
+		}
+		ctx.JSON(http.StatusAccepted, map[string]string{"status": "accepted", "id": id, "event": event})
+		return
+	}
+
+	newState, err := engine.Dispatch(ctx.RequestContext(), id, event)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
 		return

@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/kashari/brokr/config"
 	"github.com/kashari/brokr/errors"
@@ -35,7 +37,10 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 		CurrentState:       persistence.StateContainer{State: workflowDefinition.States[0]},
 		LastTransition:     "",
 	}
-	db.Create(wf)
+	wf.Complete = isEndState(*wf)
+	if result := db.Create(wf); result.Error != nil {
+		return uuid.Nil, result.Error
+	}
 	return id, nil
 }
 
@@ -80,7 +85,17 @@ func GetWorkflowInstance(id string) (model.Workflow, error) {
 //
 // - error: An error object if an error occurred during processing or if no valid transition was found; otherwise, nil.
 func SendEventToWorkflowInstance(id string, event string) (newState string, err error) {
-	db := config.Db
+	return Dispatch(context.Background(), id, event)
+}
+
+// processEvent performs one FSM step for instance id. It is only ever invoked
+// from an instanceActor goroutine, so all events for a single instance are
+// serialized here — eliminating the read-modify-write race the old inline
+// handler had. The row read + write run in one transaction (atomic, and the
+// seam for row locking if this ever needs to scale past one process), and the
+// resulting state is published to the event bus after a successful commit.
+func processEvent(ctx context.Context, id string, event string) (newState string, err error) {
+	db := config.Db.WithContext(ctx)
 	var wf persistence.WorkflowInstance
 
 	defer func() {
@@ -89,70 +104,77 @@ func SendEventToWorkflowInstance(id string, event string) (newState string, err 
 		}
 	}()
 
-	result := db.First(&wf, "id = ?", id)
-	if result.Error != nil {
-		return "", result.Error
-	}
-
-	currentState := wf.CurrentState
-	golog.Info("Sending event [{}] to workflow instance [{}] in state [{}]", event, id, currentState.GetId())
-
-	// Find the transition for the current state and event
-	var transition model.Transition
-	found := false
-	for _, t := range wf.WorkflowDefinition.Transitions {
-		if t.Source == currentState.GetId() && t.Event == event {
-			transition = t
-			found = true
-			break
+	txErr := db.Transaction(func(tx *gorm.DB) error {
+		if result := tx.First(&wf, "id = ?", id); result.Error != nil {
+			return result.Error
 		}
-	}
 
-	if !found {
-		return "", &errors.NoTransitionError{CurrentState: currentState.GetId(), Event: event}
-	}
+		currentState := wf.CurrentState
+		golog.Info("Sending event [{}] to workflow instance [{}] in state [{}]", event, id, currentState.GetId())
 
-	if transition.Join {
-		complete, joinErr := allChildrenComplete(id)
-		if joinErr != nil {
-			return "", joinErr
+		// Find the transition for the current state and event
+		var transition model.Transition
+		found := false
+		for _, t := range wf.WorkflowDefinition.Transitions {
+			if t.Source == currentState.GetId() && t.Event == event {
+				transition = t
+				found = true
+				break
+			}
 		}
-		if !complete {
-			return "", &errors.ChildrenNotCompleteError{CurrentState: currentState.GetId(), Event: event}
+
+		if !found {
+			return &errors.NoTransitionError{CurrentState: currentState.GetId(), Event: event}
 		}
-	}
 
-	// Execute exit actions of the current state
-	ctxMap, err := currentState.ExecuteExitActions(id, nil)
-	if err != nil {
-		return "", err
-	}
-
-	// Update the current state to the target state of the transition
-	for _, state := range wf.WorkflowDefinition.States {
-		if state.GetId() == transition.Target {
-			wf.CurrentState = persistence.StateContainer{State: state}
-			break
+		if transition.Join {
+			complete, joinErr := allChildrenComplete(ctx, id)
+			if joinErr != nil {
+				return joinErr
+			}
+			if !complete {
+				return &errors.ChildrenNotCompleteError{CurrentState: currentState.GetId(), Event: event}
+			}
 		}
-	}
 
-	// Execute entry actions of the new current state
-	ctxMap, err = wf.CurrentState.ExecuteEntryActions(id, ctxMap)
-	if err != nil {
-		return "", err
-	}
-
-	// Execute entry actions of the transition
-	for _, action := range transition.EntryActions {
-		ctxMap, err = action.Execute(id, ctxMap)
-		if err != nil {
-			return "", err
+		// Execute exit actions of the current state
+		ctxMap, aerr := currentState.ExecuteExitActions(ctx, id, nil)
+		if aerr != nil {
+			return aerr
 		}
+
+		// Update the current state to the target state of the transition
+		for _, state := range wf.WorkflowDefinition.States {
+			if state.GetId() == transition.Target {
+				wf.CurrentState = persistence.StateContainer{State: state}
+				break
+			}
+		}
+
+		// Execute entry actions of the new current state
+		ctxMap, aerr = wf.CurrentState.ExecuteEntryActions(ctx, id, ctxMap)
+		if aerr != nil {
+			return aerr
+		}
+
+		// Execute entry actions of the transition
+		ctxMap, aerr = model.ExecuteActions(ctx, id, ctxMap, transition.EntryActions)
+		if aerr != nil {
+			return aerr
+		}
+
+		wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", event, currentState.GetId(), wf.CurrentState.GetId())
+		wf.Complete = isEndState(wf)
+		wf.Version++
+
+		if result := tx.Save(&wf); result.Error != nil {
+			return result.Error
+		}
+		return nil
+	})
+	if txErr != nil {
+		return "", txErr
 	}
-
-	wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", event, currentState.GetId(), wf.CurrentState.GetId())
-
-	db.Save(&wf)
 
 	golog.Info("Workflow instance [{}] transitioned to state [{}]", id, wf.CurrentState.GetId())
 	return wf.CurrentState.GetId(), nil

@@ -1,8 +1,10 @@
 package model
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kashari/golog"
 )
@@ -90,8 +92,8 @@ type State interface {
 	GetResumeEvent() string
 	GetProductStatus() string
 	GetStatus() string
-	ExecuteEntryActions(token string, ctxMap map[string]string) (map[string]string, error)
-	ExecuteExitActions(token string, ctxMap map[string]string) (map[string]string, error)
+	ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
+	ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
 }
 
 type Transition struct {
@@ -100,7 +102,6 @@ type Transition struct {
 	Target       string   `json:"target"`
 	Event        string   `json:"event"`
 	EntryActions []Action `json:"entryActions"`
-	ExitActions  []Action `json:"exitActions"`
 	// Join, if true, means this transition may only fire once every one of
 	// the instance's (non-withdrawn) children has reached one of its own
 	// workflow's EndStates.
@@ -112,7 +113,6 @@ type CommonTransition struct {
 	Target       string   `json:"target"`
 	Event        string   `json:"event"`
 	EntryActions []Action `json:"entryActions"`
-	ExitActions  []Action `json:"exitActions"`
 }
 
 type ActionType string
@@ -142,21 +142,29 @@ type Action struct {
 // with engine/persistence.
 var CreateChildWorkflowFunc func(parentId string, childDefinition Workflow) (string, error)
 
-func (a *Action) Execute(auth string, ctxMap map[string]string) (map[string]string, error) {
+// CreateChildWorkflowsFunc creates several child workflow instances under
+// parentId concurrently and returns their ids in the same order as defs. Like
+// CreateChildWorkflowFunc it's a hook engine wires up (see engine's init).
+var CreateChildWorkflowsFunc func(parentId string, defs []Workflow) ([]string, error)
+
+func (a *Action) Execute(ctx context.Context, auth string, ctxMap map[string]string) (map[string]string, error) {
 	switch a.Type {
 	case HttpRequestAction:
 		if !a.ExpectResponse {
 			// Nothing will be merged back into ctxMap for this action, so it's
 			// safe to fire it off without blocking the transition on its result.
+			// It runs on the bounded async pool (context detached so it outlives
+			// the transition) instead of an unbounded raw goroutine.
 			snapshot := copyContext(ctxMap)
-			go func() {
-				if _, err := executeHttpRequestAction(a, snapshot, auth); err != nil {
-					golog.Error("async HTTP action [{}] {} failed: {}", a.Method, a.Url, err.Error())
+			action := a
+			submitAsync(func() {
+				if _, err := executeHttpRequestAction(context.Background(), action, snapshot, auth); err != nil {
+					golog.Error("async HTTP action [{}] {} failed: {}", action.Method, action.Url, err.Error())
 				}
-			}()
+			})
 			return ctxMap, nil
 		}
-		return executeHttpRequestAction(a, ctxMap, auth)
+		return executeHttpRequestAction(ctx, a, ctxMap, auth)
 	case SetContextMapAction:
 		return executeSetContextMapAction(a, ctxMap)
 	case CreateChildWorkflowAction:
@@ -164,4 +172,51 @@ func (a *Action) Execute(auth string, ctxMap map[string]string) (map[string]stri
 	default:
 		return ctxMap, nil
 	}
+}
+
+// ExecuteActions runs a list of actions against ctxMap. ctxMap-mutating actions
+// run serially in order (SetContextMap and ExpectResponse HTTP merge back into
+// the shared map, so their order is significant). A run of consecutive
+// CreateChildWorkflowActions is created in parallel via CreateChildWorkflowsFunc,
+// since separate child inserts are independent; the last child's id lands in
+// ctxMap["childWorkflowId"] (preserving prior single-child behavior) and all
+// ids, comma-joined, in ctxMap["childWorkflowIds"].
+func ExecuteActions(ctx context.Context, token string, ctxMap map[string]string, actions []Action) (map[string]string, error) {
+	if ctxMap == nil {
+		ctxMap = make(map[string]string)
+	}
+	i := 0
+	for i < len(actions) {
+		if actions[i].Type == CreateChildWorkflowAction {
+			j := i
+			var defs []Workflow
+			for j < len(actions) && actions[j].Type == CreateChildWorkflowAction {
+				if actions[j].ChildWorkflow == nil {
+					return ctxMap, fmt.Errorf("CreateChildWorkflowAction: childWorkflow is required")
+				}
+				defs = append(defs, *actions[j].ChildWorkflow)
+				j++
+			}
+			if CreateChildWorkflowsFunc == nil {
+				return ctxMap, fmt.Errorf("CreateChildWorkflowAction: child workflow creation is not wired up")
+			}
+			ids, err := CreateChildWorkflowsFunc(token, defs)
+			if err != nil {
+				return ctxMap, fmt.Errorf("create child workflows: %w", err)
+			}
+			if len(ids) > 0 {
+				ctxMap["childWorkflowId"] = ids[len(ids)-1]
+				ctxMap["childWorkflowIds"] = strings.Join(ids, ",")
+			}
+			i = j
+			continue
+		}
+		var err error
+		ctxMap, err = actions[i].Execute(ctx, token, ctxMap)
+		if err != nil {
+			return ctxMap, err
+		}
+		i++
+	}
+	return ctxMap, nil
 }

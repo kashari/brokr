@@ -1,5 +1,7 @@
 package model
 
+import "context"
+
 type SimpleState struct {
 	Type           string `json:"type"`
 	Id             string `json:"id"`
@@ -42,10 +44,10 @@ func (s *SimpleState) GetStatus() string {
 	return s.Status
 }
 
-func (s *SimpleState) ExecuteEntryActions(token string, ctxMap map[string]string) (map[string]string, error) {
+func (s *SimpleState) ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
 	return ctxMap, nil
 }
 
-func (s *SimpleState) ExecuteExitActions(token string, ctxMap map[string]string) (map[string]string, error) {
+func (s *SimpleState) ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
 	return ctxMap, nil
 }

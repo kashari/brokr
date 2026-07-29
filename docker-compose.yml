@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: misen
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: workflow
+    ports:
+      - "5436:5432"
+    volumes:
+      - brokr-db-data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U misen -d workflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  brokr-db-data:

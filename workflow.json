@@ -1,0 +1,1301 @@
+{
+  "id": "bank-account-opening",
+  "version": "1.0.0",
+  "deprecated": false,
+  "creationDate": "2026-07-29T00:00:00Z",
+  "updateDate": "2026-07-29T00:00:00Z",
+  "initialState": "application_started",
+  "endStates": [
+    "account_active",
+    "application_rejected",
+    "application_withdrawn",
+    "application_expired"
+  ],
+  "states": [
+    {
+      "type": "SimpleState",
+      "id": "application_started",
+      "frontendBullet": true,
+      "bulletName": "Application Started",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "NEW"
+    },
+    {
+      "type": "SimpleState",
+      "id": "applicant_type_selection",
+      "frontendBullet": true,
+      "bulletName": "Applicant Type Selection",
+      "resumeEvent": "resume_applicant_type_selection",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "ActionState",
+      "id": "personal_details_collection",
+      "frontendBullet": true,
+      "bulletName": "Personal Details",
+      "resumeEvent": "resume_personal_details_collection",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT",
+      "expectResponse": false,
+      "entryActions": [
+        {
+          "type": "SetContextMapAction",
+          "variables": {
+            "step": "personal_details_collection"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "identity_document_upload",
+      "frontendBullet": true,
+      "bulletName": "Identity Document Upload",
+      "resumeEvent": "resume_identity_document_upload",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "ActionState",
+      "id": "identity_verification_pending",
+      "frontendBullet": true,
+      "bulletName": "Identity Verification",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://kyc-provider.internal/api/v1/identity/verify",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "documentId": "${documentId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "identity_verification_failed",
+      "frontendBullet": true,
+      "bulletName": "Identity Verification Failed",
+      "resumeEvent": "resume_identity_verification_failed",
+      "productStatus": "IN_PROGRESS",
+      "status": "FAILED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "identity_verification_passed",
+      "frontendBullet": true,
+      "bulletName": "Identity Verified",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "address_details_collection",
+      "frontendBullet": true,
+      "bulletName": "Address Details",
+      "resumeEvent": "resume_address_details_collection",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "ActionState",
+      "id": "address_verification_pending",
+      "frontendBullet": true,
+      "bulletName": "Address Verification",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://address-verification.internal/api/v1/verify",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "addressLine1": "${addressLine1}",
+            "postalCode": "${postalCode}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "address_verification_failed",
+      "frontendBullet": true,
+      "bulletName": "Address Verification Failed",
+      "resumeEvent": "resume_address_verification_failed",
+      "productStatus": "IN_PROGRESS",
+      "status": "FAILED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "address_verification_passed",
+      "frontendBullet": true,
+      "bulletName": "Address Verified",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "contact_details_collection",
+      "frontendBullet": true,
+      "bulletName": "Contact Details",
+      "resumeEvent": "resume_contact_details_collection",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "SimpleState",
+      "id": "employment_details_collection",
+      "frontendBullet": true,
+      "bulletName": "Employment Details",
+      "resumeEvent": "resume_employment_details_collection",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "SimpleState",
+      "id": "source_of_funds_declaration",
+      "frontendBullet": true,
+      "bulletName": "Source of Funds Declaration",
+      "resumeEvent": "resume_source_of_funds_declaration",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "ActionState",
+      "id": "kyc_screening_pending",
+      "frontendBullet": true,
+      "bulletName": "KYC Screening",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://kyc-provider.internal/api/v1/kyc/screen",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "sanctions_screening_pending",
+      "frontendBullet": true,
+      "bulletName": "Sanctions Screening",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://compliance.internal/api/v1/sanctions/screen",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "pep_screening_pending",
+      "frontendBullet": true,
+      "bulletName": "PEP Screening",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://compliance.internal/api/v1/pep/screen",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "aml_risk_scoring",
+      "frontendBullet": false,
+      "bulletName": "AML Risk Scoring",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://risk-engine.internal/api/v1/aml/score",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "low_risk_auto_approved",
+      "frontendBullet": true,
+      "bulletName": "Risk Approved",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "medium_risk_manual_review",
+      "frontendBullet": true,
+      "bulletName": "Manual Review",
+      "resumeEvent": "resume_medium_risk_manual_review",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_REVIEW"
+    },
+    {
+      "type": "ActionState",
+      "id": "high_risk_compliance_review",
+      "frontendBullet": true,
+      "bulletName": "Compliance Review",
+      "resumeEvent": "resume_high_risk_compliance_review",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_REVIEW",
+      "expectResponse": false,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://notifications.internal/api/v1/compliance-team/notify",
+          "expectResponse": false,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}",
+            "reason": "high_risk_score"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "compliance_review_approved",
+      "frontendBullet": true,
+      "bulletName": "Compliance Approved",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "compliance_review_rejected",
+      "frontendBullet": true,
+      "bulletName": "Compliance Rejected",
+      "resumeEvent": "",
+      "productStatus": "TERMINATED",
+      "status": "REJECTED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "additional_documents_requested",
+      "frontendBullet": true,
+      "bulletName": "Additional Documents Requested",
+      "resumeEvent": "resume_additional_documents_requested",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "SimpleState",
+      "id": "additional_documents_received",
+      "frontendBullet": true,
+      "bulletName": "Additional Documents Received",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM"
+    },
+    {
+      "type": "ActionState",
+      "id": "credit_check_pending",
+      "frontendBullet": true,
+      "bulletName": "Credit Check",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://credit-bureau.internal/api/v1/credit-check",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "credit_check_failed",
+      "frontendBullet": true,
+      "bulletName": "Credit Check Failed",
+      "resumeEvent": "resume_credit_check_failed",
+      "productStatus": "IN_PROGRESS",
+      "status": "FAILED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "credit_check_passed",
+      "frontendBullet": true,
+      "bulletName": "Credit Check Passed",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "account_type_selection",
+      "frontendBullet": true,
+      "bulletName": "Account Type Selection",
+      "resumeEvent": "resume_account_type_selection",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "ActionState",
+      "id": "joint_applicant_invited",
+      "frontendBullet": true,
+      "bulletName": "Joint Applicant Invited",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": false,
+      "entryActions": [
+        {
+          "type": "CreateChildWorkflowAction",
+          "childWorkflow": {
+            "id": "bank-account-joint-applicant-verification",
+            "version": "1.0.0",
+            "deprecated": false,
+            "creationDate": "2026-07-29T00:00:00Z",
+            "updateDate": "2026-07-29T00:00:00Z",
+            "initialState": "joint_application_started",
+            "endStates": [
+              "joint_applicant_verified",
+              "joint_applicant_declined"
+            ],
+            "states": [
+              {
+                "type": "SimpleState",
+                "id": "joint_application_started",
+                "frontendBullet": true,
+                "bulletName": "Joint Applicant Started",
+                "resumeEvent": "",
+                "productStatus": "IN_PROGRESS",
+                "status": "NEW"
+              },
+              {
+                "type": "SimpleState",
+                "id": "joint_applicant_details_collection",
+                "frontendBullet": true,
+                "bulletName": "Joint Applicant Details",
+                "resumeEvent": "resume_joint_applicant_details_collection",
+                "productStatus": "IN_PROGRESS",
+                "status": "PENDING_INPUT"
+              },
+              {
+                "type": "ActionState",
+                "id": "joint_applicant_identity_verification_pending",
+                "frontendBullet": true,
+                "bulletName": "Joint Applicant Identity Verification",
+                "resumeEvent": "",
+                "productStatus": "IN_PROGRESS",
+                "status": "PENDING_SYSTEM",
+                "expectResponse": true,
+                "entryActions": [
+                  {
+                    "type": "HttpRequestAction",
+                    "method": "POST",
+                    "url": "https://kyc-provider.internal/api/v1/identity/verify",
+                    "expectResponse": true,
+                    "forwardToken": true,
+                    "variables": {
+                      "documentId": "${documentId}"
+                    }
+                  }
+                ],
+                "exitActions": []
+              },
+              {
+                "type": "SimpleState",
+                "id": "joint_applicant_verified",
+                "frontendBullet": true,
+                "bulletName": "Joint Applicant Verified",
+                "resumeEvent": "",
+                "productStatus": "COMPLETED",
+                "status": "PASSED"
+              },
+              {
+                "type": "SimpleState",
+                "id": "joint_applicant_declined",
+                "frontendBullet": true,
+                "bulletName": "Joint Applicant Declined",
+                "resumeEvent": "",
+                "productStatus": "TERMINATED",
+                "status": "REJECTED"
+              }
+            ],
+            "transitions": [
+              {
+                "type": "AUTOMATIC",
+                "source": "joint_application_started",
+                "target": "joint_applicant_details_collection",
+                "event": "start",
+                "entryActions": [],
+                "join": false
+              },
+              {
+                "type": "USER",
+                "source": "joint_applicant_details_collection",
+                "target": "joint_applicant_identity_verification_pending",
+                "event": "submit_details",
+                "entryActions": [],
+                "join": false
+              },
+              {
+                "type": "SYSTEM",
+                "source": "joint_applicant_identity_verification_pending",
+                "target": "joint_applicant_verified",
+                "event": "verification_passed",
+                "entryActions": [],
+                "join": false
+              },
+              {
+                "type": "SYSTEM",
+                "source": "joint_applicant_identity_verification_pending",
+                "target": "joint_applicant_declined",
+                "event": "verification_failed",
+                "entryActions": [],
+                "join": false
+              }
+            ],
+            "commonTransitions": []
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "joint_applicant_verification_pending",
+      "frontendBullet": true,
+      "bulletName": "Awaiting Joint Applicant",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM"
+    },
+    {
+      "type": "SimpleState",
+      "id": "product_terms_presented",
+      "frontendBullet": true,
+      "bulletName": "Product Terms Presented",
+      "resumeEvent": "resume_product_terms_presented",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT"
+    },
+    {
+      "type": "SimpleState",
+      "id": "terms_accepted",
+      "frontendBullet": true,
+      "bulletName": "Terms Accepted",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "terms_declined",
+      "frontendBullet": true,
+      "bulletName": "Terms Declined",
+      "resumeEvent": "",
+      "productStatus": "TERMINATED",
+      "status": "REJECTED"
+    },
+    {
+      "type": "ActionState",
+      "id": "e_signature_pending",
+      "frontendBullet": true,
+      "bulletName": "E-Signature",
+      "resumeEvent": "resume_e_signature_pending",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://esign-provider.internal/api/v1/envelopes",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "initial_deposit_pending",
+      "frontendBullet": true,
+      "bulletName": "Initial Deposit",
+      "resumeEvent": "resume_initial_deposit_pending",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_INPUT",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://payments.internal/api/v1/deposits",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}",
+            "amount": "${initialDepositAmount}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "initial_deposit_failed",
+      "frontendBullet": true,
+      "bulletName": "Deposit Failed",
+      "resumeEvent": "resume_initial_deposit_failed",
+      "productStatus": "IN_PROGRESS",
+      "status": "FAILED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "initial_deposit_confirmed",
+      "frontendBullet": true,
+      "bulletName": "Deposit Confirmed",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PASSED"
+    },
+    {
+      "type": "ActionState",
+      "id": "account_provisioning",
+      "frontendBullet": true,
+      "bulletName": "Account Provisioning",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": true,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://core-banking.internal/api/v1/accounts",
+          "expectResponse": true,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}",
+            "accountType": "${accountType}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "debit_card_issuance_pending",
+      "frontendBullet": true,
+      "bulletName": "Debit Card Issuance",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": false,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://card-issuer.internal/api/v1/cards",
+          "expectResponse": false,
+          "forwardToken": true,
+          "variables": {
+            "accountNumber": "${accountNumber}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "online_banking_credentials_setup",
+      "frontendBullet": true,
+      "bulletName": "Online Banking Setup",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": false,
+      "entryActions": [
+        {
+          "type": "SetContextMapAction",
+          "variables": {
+            "onlineBankingEnrolled": "true"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "ActionState",
+      "id": "welcome_packet_dispatch",
+      "frontendBullet": true,
+      "bulletName": "Welcome Packet Dispatch",
+      "resumeEvent": "",
+      "productStatus": "IN_PROGRESS",
+      "status": "PENDING_SYSTEM",
+      "expectResponse": false,
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://notifications.internal/api/v1/welcome-packet",
+          "expectResponse": false,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}",
+            "accountNumber": "${accountNumber}"
+          }
+        }
+      ],
+      "exitActions": []
+    },
+    {
+      "type": "SimpleState",
+      "id": "account_active",
+      "frontendBullet": true,
+      "bulletName": "Account Active",
+      "resumeEvent": "",
+      "productStatus": "COMPLETED",
+      "status": "ACTIVE"
+    },
+    {
+      "type": "SimpleState",
+      "id": "application_rejected",
+      "frontendBullet": true,
+      "bulletName": "Application Rejected",
+      "resumeEvent": "",
+      "productStatus": "TERMINATED",
+      "status": "REJECTED"
+    },
+    {
+      "type": "SimpleState",
+      "id": "application_withdrawn",
+      "frontendBullet": true,
+      "bulletName": "Application Withdrawn",
+      "resumeEvent": "",
+      "productStatus": "TERMINATED",
+      "status": "WITHDRAWN"
+    },
+    {
+      "type": "SimpleState",
+      "id": "application_expired",
+      "frontendBullet": true,
+      "bulletName": "Application Expired",
+      "resumeEvent": "",
+      "productStatus": "TERMINATED",
+      "status": "EXPIRED"
+    }
+  ],
+  "transitions": [
+    {
+      "type": "AUTOMATIC",
+      "source": "application_started",
+      "target": "applicant_type_selection",
+      "event": "start",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "applicant_type_selection",
+      "target": "personal_details_collection",
+      "event": "select_applicant_type",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "personal_details_collection",
+      "target": "identity_document_upload",
+      "event": "submit_personal_details",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "identity_document_upload",
+      "target": "identity_verification_pending",
+      "event": "submit_identity_document",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "identity_verification_pending",
+      "target": "identity_verification_passed",
+      "event": "verification_passed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "identity_verification_pending",
+      "target": "identity_verification_failed",
+      "event": "verification_failed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "identity_verification_failed",
+      "target": "identity_document_upload",
+      "event": "retry_identity_document",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "identity_verification_failed",
+      "target": "application_rejected",
+      "event": "abandon_after_failure",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "identity_verification_passed",
+      "target": "address_details_collection",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "address_details_collection",
+      "target": "address_verification_pending",
+      "event": "submit_address_details",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "address_verification_pending",
+      "target": "address_verification_passed",
+      "event": "verification_passed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "address_verification_pending",
+      "target": "address_verification_failed",
+      "event": "verification_failed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "address_verification_failed",
+      "target": "address_details_collection",
+      "event": "retry_address_details",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "address_verification_passed",
+      "target": "contact_details_collection",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "contact_details_collection",
+      "target": "employment_details_collection",
+      "event": "submit_contact_details",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "employment_details_collection",
+      "target": "source_of_funds_declaration",
+      "event": "submit_employment_details",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "source_of_funds_declaration",
+      "target": "kyc_screening_pending",
+      "event": "submit_source_of_funds",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "kyc_screening_pending",
+      "target": "sanctions_screening_pending",
+      "event": "kyc_cleared",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "kyc_screening_pending",
+      "target": "application_rejected",
+      "event": "kyc_flagged",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "sanctions_screening_pending",
+      "target": "pep_screening_pending",
+      "event": "sanctions_cleared",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "sanctions_screening_pending",
+      "target": "application_rejected",
+      "event": "sanctions_hit",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "pep_screening_pending",
+      "target": "aml_risk_scoring",
+      "event": "pep_cleared",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "pep_screening_pending",
+      "target": "high_risk_compliance_review",
+      "event": "pep_hit",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "aml_risk_scoring",
+      "target": "low_risk_auto_approved",
+      "event": "risk_low",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "aml_risk_scoring",
+      "target": "medium_risk_manual_review",
+      "event": "risk_medium",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "aml_risk_scoring",
+      "target": "high_risk_compliance_review",
+      "event": "risk_high",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "low_risk_auto_approved",
+      "target": "credit_check_pending",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "medium_risk_manual_review",
+      "target": "credit_check_pending",
+      "event": "reviewer_approve",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "medium_risk_manual_review",
+      "target": "additional_documents_requested",
+      "event": "reviewer_request_documents",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "medium_risk_manual_review",
+      "target": "application_rejected",
+      "event": "reviewer_reject",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "high_risk_compliance_review",
+      "target": "compliance_review_approved",
+      "event": "compliance_approve",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "high_risk_compliance_review",
+      "target": "compliance_review_rejected",
+      "event": "compliance_reject",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "high_risk_compliance_review",
+      "target": "additional_documents_requested",
+      "event": "compliance_request_documents",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "compliance_review_approved",
+      "target": "credit_check_pending",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "compliance_review_rejected",
+      "target": "application_rejected",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "additional_documents_requested",
+      "target": "additional_documents_received",
+      "event": "submit_additional_documents",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "additional_documents_received",
+      "target": "kyc_screening_pending",
+      "event": "resubmit_for_screening",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "credit_check_pending",
+      "target": "credit_check_passed",
+      "event": "credit_check_passed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "credit_check_pending",
+      "target": "credit_check_failed",
+      "event": "credit_check_failed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "credit_check_failed",
+      "target": "account_type_selection",
+      "event": "proceed_with_restricted_product",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "credit_check_failed",
+      "target": "application_rejected",
+      "event": "abandon_after_credit_failure",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "credit_check_passed",
+      "target": "account_type_selection",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "account_type_selection",
+      "target": "joint_applicant_invited",
+      "event": "select_joint_account",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "account_type_selection",
+      "target": "product_terms_presented",
+      "event": "select_individual_account",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "joint_applicant_invited",
+      "target": "joint_applicant_verification_pending",
+      "event": "invite_sent",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "joint_applicant_verification_pending",
+      "target": "product_terms_presented",
+      "event": "joint_applicant_complete",
+      "entryActions": [],
+      "join": true
+    },
+    {
+      "type": "USER",
+      "source": "product_terms_presented",
+      "target": "terms_accepted",
+      "event": "accept_terms",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "product_terms_presented",
+      "target": "terms_declined",
+      "event": "decline_terms",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "terms_declined",
+      "target": "application_rejected",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "terms_accepted",
+      "target": "e_signature_pending",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "e_signature_pending",
+      "target": "initial_deposit_pending",
+      "event": "signature_completed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "initial_deposit_pending",
+      "target": "initial_deposit_confirmed",
+      "event": "deposit_confirmed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "SYSTEM",
+      "source": "initial_deposit_pending",
+      "target": "initial_deposit_failed",
+      "event": "deposit_failed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "USER",
+      "source": "initial_deposit_failed",
+      "target": "initial_deposit_pending",
+      "event": "retry_deposit",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "initial_deposit_confirmed",
+      "target": "account_provisioning",
+      "event": "proceed",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "account_provisioning",
+      "target": "debit_card_issuance_pending",
+      "event": "account_created",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "debit_card_issuance_pending",
+      "target": "online_banking_credentials_setup",
+      "event": "card_issued",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "online_banking_credentials_setup",
+      "target": "welcome_packet_dispatch",
+      "event": "credentials_created",
+      "entryActions": [],
+      "join": false
+    },
+    {
+      "type": "AUTOMATIC",
+      "source": "welcome_packet_dispatch",
+      "target": "account_active",
+      "event": "packet_dispatched",
+      "entryActions": [],
+      "join": false
+    }
+  ],
+  "commonTransitions": [
+    {
+      "sourceList": [
+        "applicant_type_selection",
+        "personal_details_collection",
+        "identity_document_upload",
+        "identity_verification_failed",
+        "address_details_collection",
+        "address_verification_failed",
+        "contact_details_collection",
+        "employment_details_collection",
+        "source_of_funds_declaration",
+        "medium_risk_manual_review",
+        "additional_documents_requested",
+        "credit_check_failed",
+        "account_type_selection",
+        "product_terms_presented",
+        "e_signature_pending",
+        "initial_deposit_failed"
+      ],
+      "target": "application_withdrawn",
+      "event": "withdraw",
+      "entryActions": [
+        {
+          "type": "SetContextMapAction",
+          "variables": {
+            "withdrawalReason": "${withdrawalReason}"
+          }
+        }
+      ]
+    },
+    {
+      "sourceList": [
+        "applicant_type_selection",
+        "personal_details_collection",
+        "identity_document_upload",
+        "identity_verification_failed",
+        "address_details_collection",
+        "address_verification_failed",
+        "contact_details_collection",
+        "employment_details_collection",
+        "source_of_funds_declaration",
+        "additional_documents_requested",
+        "credit_check_failed",
+        "account_type_selection",
+        "product_terms_presented",
+        "e_signature_pending",
+        "initial_deposit_failed"
+      ],
+      "target": "application_expired",
+      "event": "timeout",
+      "entryActions": []
+    },
+    {
+      "sourceList": [
+        "medium_risk_manual_review",
+        "high_risk_compliance_review",
+        "additional_documents_requested"
+      ],
+      "target": "compliance_review_rejected",
+      "event": "flag_fraud_suspected",
+      "entryActions": [
+        {
+          "type": "HttpRequestAction",
+          "method": "POST",
+          "url": "https://compliance.internal/api/v1/fraud/report",
+          "expectResponse": false,
+          "forwardToken": true,
+          "variables": {
+            "applicantId": "${applicantId}"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -14,6 +14,15 @@ type WorkflowInstance struct {
 	WorkflowDefinition model.Workflow `json:"workflowDefinition" gorm:"type:jsonb;serializer:json"`
 	CurrentState       StateContainer `json:"currentState" gorm:"type:jsonb"`
 	LastTransition     string         `json:"lastTransition" gorm:"type:text"`
+	// Version is bumped on every persisted transition. It's an optimistic
+	// concurrency marker: the actor-per-instance dispatcher already serializes
+	// writes to one instance, so a stale Version would signal a serialization
+	// bug rather than normal contention.
+	Version int `json:"version" gorm:"default:0"`
+	// Complete is true once CurrentState is one of the instance's own
+	// WorkflowDefinition.EndStates. Persisting it lets a parent's join gate be
+	// evaluated with a single SQL count instead of loading every child's jsonb.
+	Complete bool `json:"complete" gorm:"index;default:false"`
 	CreatedAt          time.Time      `json:"created_at" gorm:"autoCreateTime;index"`
 	UpdatedAt          time.Time      `json:"updated_at" gorm:"autoUpdateTime;index"`
 	DeletedAt          gorm.DeletedAt `json:"deleted_at" gorm:"index;default:null"`

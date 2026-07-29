@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/kashari/brokr/config"
+	"github.com/kashari/brokr/engine"
+	"github.com/kashari/brokr/model"
 	"github.com/kashari/brokr/persistence"
 	"github.com/kashari/brokr/web"
 	"github.com/kashari/draupnir"
@@ -39,14 +44,41 @@ func main() {
 	// underlying http.Server, which would kill any SSE connection open
 	// longer than that.
 	server := &http.Server{
-		Addr:        ":" + port,
-		Handler:     router,
-		ReadTimeout: 10 * time.Second,
-		IdleTimeout: 90 * time.Second,
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
 
-	golog.Info("Starting server on port {}", port)
-	if err := server.ListenAndServe(); err != nil {
+	// Run the server in the background so main can block on a shutdown signal.
+	serverErr := make(chan error, 1)
+	go func() {
+		golog.Info("Starting server on port {}", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
 		golog.Error("server error: {}", err.Error())
+	case sig := <-stop:
+		golog.Info("Received signal {}, shutting down gracefully", sig.String())
 	}
+
+	// Graceful shutdown: stop accepting new requests, then drain in-flight
+	// transitions (dispatcher) and fire-and-forget action jobs (async pool)
+	// before exiting, so max in-flight work isn't lost.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		golog.Error("graceful shutdown error: {}", err.Error())
+	}
+	engine.Drain()
+	model.DrainAsyncPool()
+	golog.Info("Shutdown complete")
 }
