@@ -96,12 +96,21 @@ type State interface {
 	ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
 }
 
+type TransitionType string
+
+const (
+	ExternalTransition TransitionType = "ExternalTransition"
+	InternalTransition TransitionType = "InternalTransition"
+	ForkTransition     TransitionType = "ForkTransition"
+	JoinTransition     TransitionType = "JoinTransition"
+)
+
 type Transition struct {
-	Type         string   `json:"type"`
-	Source       string   `json:"source"`
-	Target       string   `json:"target"`
-	Event        string   `json:"event"`
-	EntryActions []Action `json:"entryActions"`
+	Type         TransitionType `json:"type"`
+	Source       string         `json:"source"`
+	Target       string         `json:"target"`
+	Event        string         `json:"event"`
+	EntryActions []Action       `json:"entryActions"`
 	// Join, if true, means this transition may only fire once every one of
 	// the instance's (non-withdrawn) children has reached one of its own
 	// workflow's EndStates.
