@@ -24,10 +24,11 @@ func init() {
 	model.CreateChildWorkflowsFunc = CreateChildWorkflowInstancesBatch
 }
 
-// CreateChildWorkflowInstance creates a new workflow instance linked to
-// parentId as its parent. parentId must reference an existing (non-withdrawn)
-// instance.
-func CreateChildWorkflowInstance(parentId string, childDefinition model.Workflow) (uuid.UUID, error) {
+// createChildWorkflowInstance is the shared core of CreateChildWorkflowInstance
+// and CreateChildWorkflowInstancesBatchWithGeneration. forkGeneration is ""
+// for ad hoc single-child creation (CreateChildWorkflowAction), non-empty
+// for children spawned by a formal Fork transition.
+func createChildWorkflowInstance(parentId string, childDefinition model.Workflow, forkGeneration string) (uuid.UUID, error) {
 	db := config.Db
 
 	var parent persistence.WorkflowInstance
@@ -45,6 +46,7 @@ func CreateChildWorkflowInstance(parentId string, childDefinition model.Workflow
 	child := &persistence.WorkflowInstance{
 		Id:                 id,
 		ParentId:           &parentUUID,
+		ForkGeneration:     forkGeneration,
 		WorkflowDefinition: childDefinition,
 		CurrentState:       persistence.StateContainer{State: childDefinition.States[0]},
 	}
@@ -55,11 +57,24 @@ func CreateChildWorkflowInstance(parentId string, childDefinition model.Workflow
 	return id, nil
 }
 
+// CreateChildWorkflowInstance creates a new workflow instance linked to
+// parentId as its parent. parentId must reference an existing (non-withdrawn)
+// instance.
+func CreateChildWorkflowInstance(parentId string, childDefinition model.Workflow) (uuid.UUID, error) {
+	return createChildWorkflowInstance(parentId, childDefinition, "")
+}
+
 // CreateChildWorkflowInstancesBatch creates every child in defs concurrently
-// (independent inserts) and returns their ids in the same order as defs. It
-// backs model.CreateChildWorkflowsFunc, so a transition that spawns several
-// children pays roughly one insert's worth of latency instead of N serial ones.
+// (independent inserts, unstamped generation) and returns their ids in the
+// same order as defs. It backs model.CreateChildWorkflowsFunc.
 func CreateChildWorkflowInstancesBatch(parentId string, defs []model.Workflow) ([]string, error) {
+	return CreateChildWorkflowInstancesBatchWithGeneration(parentId, defs, "")
+}
+
+// CreateChildWorkflowInstancesBatchWithGeneration is CreateChildWorkflowInstancesBatch
+// with every created child stamped with forkGeneration, so a later Join
+// transition can scope allChildrenComplete to exactly this cohort (Task 10).
+func CreateChildWorkflowInstancesBatchWithGeneration(parentId string, defs []model.Workflow, forkGeneration string) ([]string, error) {
 	if len(defs) == 0 {
 		return nil, nil
 	}
@@ -68,7 +83,7 @@ func CreateChildWorkflowInstancesBatch(parentId string, defs []model.Workflow) (
 	for i := range defs {
 		i := i
 		g.Go(func() error {
-			id, err := CreateChildWorkflowInstance(parentId, defs[i])
+			id, err := createChildWorkflowInstance(parentId, defs[i], forkGeneration)
 			if err != nil {
 				return err
 			}
