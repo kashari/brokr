@@ -278,13 +278,8 @@ func ExecuteActions(ctx context.Context, token string, ctxMap map[string]string,
 	return ctxMap, nil
 }
 
-// Guard and ForkTarget are defined fully in Task 4 / Task 9; this stub
-// keeps the package compiling in between.
-type Guard struct {
-	Key   string
-	Op    string
-	Value string
-}
+// ForkTarget is defined fully in Task 9; this stub keeps the package
+// compiling until then.
 type ForkTarget struct {
 	Ref           string
 	ChildWorkflow *Workflow
