@@ -14,6 +14,12 @@ type WorkflowInstance struct {
 	WorkflowDefinition model.Workflow `json:"workflowDefinition" gorm:"type:jsonb;serializer:json"`
 	CurrentState       StateContainer `json:"currentState" gorm:"type:jsonb"`
 	LastTransition     string         `json:"lastTransition" gorm:"type:text"`
+	// ContextMap persists the workflow's ${var} interpolation variables
+	// across transitions. Every transition loads it, threads it through
+	// exit/entry/transition actions (which may add or overwrite keys via
+	// SetContextMapAction or an ExpectResponse HTTP action), and saves the
+	// result back in the same write that persists the new CurrentState.
+	ContextMap map[string]string `json:"contextMap" gorm:"type:jsonb;serializer:json"`
 	// Version is bumped on every persisted transition. It's an optimistic
 	// concurrency marker: the actor-per-instance dispatcher already serializes
 	// writes to one instance, so a stale Version would signal a serialization

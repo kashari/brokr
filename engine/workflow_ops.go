@@ -163,7 +163,11 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 		}
 
 		// Execute exit actions of the current state
-		ctxMap, aerr := currentState.ExecuteExitActions(ctx, id, nil)
+		ctxMap := wf.ContextMap
+		if ctxMap == nil {
+			ctxMap = make(map[string]string)
+		}
+		ctxMap, aerr := currentState.ExecuteExitActions(ctx, id, ctxMap)
 		if aerr != nil {
 			return aerr
 		}
@@ -190,6 +194,7 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 
 		wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", event, currentState.GetId(), wf.CurrentState.GetId())
 		wf.Complete = isEndState(wf)
+		wf.ContextMap = ctxMap
 		wf.Version++
 
 		if result := tx.Save(&wf); result.Error != nil {
