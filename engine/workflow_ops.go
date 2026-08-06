@@ -36,6 +36,15 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 		CurrentState:       persistence.StateContainer{State: workflowDefinition.States[0]},
 		LastTransition:     "",
 	}
+	// Chain any AUTOMATIC transitions out of the initial state before the
+	// instance is ever persisted — nothing is saved yet, so running the
+	// chain in-memory and creating once is simpler than wrapping this in
+	// a transaction the way processEvent has to.
+	ctxMap, err := runAutomaticChain(context.Background(), id.String(), wf, make(map[string]string))
+	if err != nil {
+		return uuid.Nil, err
+	}
+	wf.ContextMap = ctxMap
 	wf.Complete = isEndState(*wf)
 	if result := db.Create(wf); result.Error != nil {
 		return uuid.Nil, result.Error
@@ -132,6 +141,11 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 
 		var aerr error
 		ctxMap, aerr = applyTransition(ctx, id, &wf, transition, ctxMap)
+		if aerr != nil {
+			return aerr
+		}
+
+		ctxMap, aerr = runAutomaticChain(ctx, id, &wf, ctxMap)
 		if aerr != nil {
 			return aerr
 		}

@@ -49,3 +49,40 @@ func TestApplyTransitionRunsActionsInOrder(t *testing.T) {
 	}
 	_ = ctxMap
 }
+
+func TestFindAutomaticTransition(t *testing.T) {
+	def := model.Workflow{
+		Transitions: []model.Transition{
+			{Source: "a", Event: "auto1", Target: "b", Trigger: model.AutomaticTrigger},
+			{Source: "a", Event: "manual", Target: "c"},
+			{Source: "a", Event: "deferred", Target: "d", Trigger: model.AutomaticTrigger, After: "1h"},
+		},
+	}
+	got, ok := findAutomaticTransition(def, "a", nil)
+	if !ok || got.Event != "auto1" {
+		t.Fatalf("got %+v, ok=%v, want auto1 (deferred one must be skipped here)", got, ok)
+	}
+	if _, ok := findAutomaticTransition(def, "b", nil); ok {
+		t.Fatal("no automatic transition from b, expected none")
+	}
+}
+
+func TestApplyTransitionChainCycleGuard(t *testing.T) {
+	a := &model.SimpleState{Type: "SimpleState", Id: "a"}
+	b := &model.SimpleState{Type: "SimpleState", Id: "b"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{
+			States: []model.State{a, b},
+			Transitions: []model.Transition{
+				{Source: "a", Event: "auto", Target: "b", Trigger: model.AutomaticTrigger},
+				{Source: "b", Event: "auto", Target: "a", Trigger: model.AutomaticTrigger},
+			},
+		},
+		CurrentState: persistence.StateContainer{State: a},
+	}
+	ctxMap, err := runAutomaticChain(context.Background(), "test-id", wf, map[string]string{})
+	if err == nil {
+		t.Fatal("expected cycle-guard error, got nil")
+	}
+	_ = ctxMap
+}

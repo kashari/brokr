@@ -111,3 +111,53 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 	wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", t.Event, fromId, wf.CurrentState.State.GetId())
 	return ctxMap, nil
 }
+
+// maxAutomaticHops bounds how many AUTOMATIC transitions can chain in a
+// single processEvent call. A workflow author who accidentally creates a
+// cycle of completion transitions (A -auto-> B -auto-> A) would otherwise
+// hang the instance's actor forever; this turns that authoring bug into
+// an error instead.
+const maxAutomaticHops = 100
+
+// findAutomaticTransition returns the first zero-delay AUTOMATIC
+// transition out of sourceId whose Guard passes. After > 0 transitions
+// are deferred timers (Task 13), not chained synchronously here.
+func findAutomaticTransition(wfDef model.Workflow, sourceId string, ctxMap map[string]string) (model.Transition, bool) {
+	for _, t := range wfDef.Transitions {
+		if t.Source != sourceId || t.Trigger != model.AutomaticTrigger || t.After != "" {
+			continue
+		}
+		if !t.Guard.Evaluate(ctxMap) {
+			continue
+		}
+		return t, true
+	}
+	return model.Transition{}, false
+}
+
+// findDeferredTransitions is Task 13's counterpart: all AUTOMATIC
+// transitions out of sourceId with After > 0, whose Guard passes.
+
+// runAutomaticChain repeatedly applies findAutomaticTransition's match
+// against wf's new position until none matches, capped by
+// maxAutomaticHops. It mutates wf and returns the final ctxMap — the
+// return value must be threaded back to the caller explicitly because
+// applyTransition may hand back a freshly allocated map when ctxMap
+// starts nil, so relying on Go's reference-type map semantics alone
+// would be fragile.
+func runAutomaticChain(ctx context.Context, id string, wf *persistence.WorkflowInstance, ctxMap map[string]string) (map[string]string, error) {
+	for hop := 0; ; hop++ {
+		if hop >= maxAutomaticHops {
+			return ctxMap, fmt.Errorf("automatic transition chain from state %q exceeded %d hops (likely a cycle in the workflow definition)", wf.CurrentState.State.GetId(), maxAutomaticHops)
+		}
+		t, ok := findAutomaticTransition(wf.WorkflowDefinition, wf.CurrentState.State.GetId(), ctxMap)
+		if !ok {
+			return ctxMap, nil
+		}
+		var err error
+		ctxMap, err = applyTransition(ctx, id, wf, t, ctxMap)
+		if err != nil {
+			return ctxMap, err
+		}
+	}
+}
