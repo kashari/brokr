@@ -278,9 +278,11 @@ func ExecuteActions(ctx context.Context, token string, ctxMap map[string]string,
 	return ctxMap, nil
 }
 
-// ForkTarget is defined fully in Task 9; this stub keeps the package
-// compiling until then.
+// ForkTarget is one concurrent region spawned by a Kind == ForkKind
+// transition — a child workflow instance created atomically alongside
+// its siblings when the fork fires. Ref is an optional author-facing
+// label (not used by the engine, purely documentation in the JSON).
 type ForkTarget struct {
-	Ref           string
-	ChildWorkflow *Workflow
+	Ref           string    `json:"ref,omitempty"`
+	ChildWorkflow *Workflow `json:"childWorkflow,omitempty"`
 }

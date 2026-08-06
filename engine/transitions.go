@@ -4,9 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/kashari/brokr/model"
 	"github.com/kashari/brokr/persistence"
 )
+
+// createChildBatchFn is engine.CreateChildWorkflowInstancesBatchWithGeneration,
+// indirected so tests can substitute a fake instead of needing a live DB.
+var createChildBatchFn = CreateChildWorkflowInstancesBatchWithGeneration
 
 // findStateById returns the state in states with the given id, or nil.
 func findStateById(states []model.State, id string) model.State {
@@ -104,6 +109,29 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		return ctxMap, fmt.Errorf("transition target %q not found in workflow %q", t.Target, wf.WorkflowDefinition.Id)
 	}
 	wf.CurrentState = persistence.StateContainer{State: target}
+
+	if t.Kind == model.ForkKind {
+		// Fork fires atomically: stamp one generation id for all regions so
+		// a later join (Task 10/11) can tell which batch of children it's
+		// waiting on, then spawn them. t.Target is the "fork-and-wait"
+		// placeholder state the parent sits in until then.
+		forkGen := uuid.New().String()
+		defs := make([]model.Workflow, len(t.ForkTargets))
+		for i, ft := range t.ForkTargets {
+			if ft.ChildWorkflow == nil {
+				return ctxMap, fmt.Errorf("fork transition %s->%s: forkTargets[%d] missing childWorkflow", t.Source, t.Target, i)
+			}
+			defs[i] = *ft.ChildWorkflow
+		}
+		if _, err := createChildBatchFn(id, defs, forkGen); err != nil {
+			return ctxMap, fmt.Errorf("fork transition: %w", err)
+		}
+		wf.PendingForkGeneration = forkGen
+	} else if t.IsJoin() {
+		// Firing a join clears the generation the parent was waiting on —
+		// it's no longer pending once the join transition itself applies.
+		wf.PendingForkGeneration = ""
+	}
 
 	ctxMap, err = target.ExecuteEntryActions(ctx, id, ctxMap)
 	if err != nil {

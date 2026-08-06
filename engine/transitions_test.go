@@ -110,3 +110,43 @@ func TestApplyTransitionInternalKindNoStateChange(t *testing.T) {
 	}
 	_ = fired
 }
+
+func TestApplyTransitionForkStampsGenerationAndSetsPending(t *testing.T) {
+	created := []model.Workflow{}
+	restore := createChildBatchFn
+	createChildBatchFn = func(parentId string, defs []model.Workflow, forkGeneration string) ([]string, error) {
+		created = defs
+		if forkGeneration == "" {
+			t.Fatal("expected a non-empty fork generation")
+		}
+		return []string{"child-1", "child-2"}, nil
+	}
+	defer func() { createChildBatchFn = restore }()
+
+	src := &model.SimpleState{Type: "SimpleState", Id: "review"}
+	wait := &model.SimpleState{Type: "SimpleState", Id: "waiting"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{States: []model.State{src, wait}},
+		CurrentState:       persistence.StateContainer{State: src},
+	}
+	tr := model.Transition{
+		Source: "review", Target: "waiting", Event: "split", Kind: model.ForkKind,
+		ForkTargets: []model.ForkTarget{
+			{Ref: "region-a", ChildWorkflow: &model.Workflow{States: []model.State{&model.SimpleState{Type: "SimpleState", Id: "s"}}}},
+			{Ref: "region-b", ChildWorkflow: &model.Workflow{States: []model.State{&model.SimpleState{Type: "SimpleState", Id: "s"}}}},
+		},
+	}
+
+	if _, err := applyTransition(context.Background(), "parent-id", wf, tr, map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 2 {
+		t.Fatalf("expected 2 children created, got %d", len(created))
+	}
+	if wf.PendingForkGeneration == "" {
+		t.Fatal("expected PendingForkGeneration to be set")
+	}
+	if wf.CurrentState.State.GetId() != "waiting" {
+		t.Fatalf("CurrentState = %q, want waiting", wf.CurrentState.State.GetId())
+	}
+}
