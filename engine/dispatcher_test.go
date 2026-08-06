@@ -3,11 +3,31 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// testSafeProcessFn is the at-rest value processFn holds between/after
+// dispatcher tests, instead of the real DB-backed processEvent. enqueue's
+// select races a.mailbox<- against ctx.Done() when the mailbox has room,
+// so an already-cancelled Dispatch call can still land its command in the
+// mailbox (see TestDispatchContextCancel); if the test that queued it had
+// already restored processFn to processEvent by the time the actor
+// dequeues it, the real processEvent panics on the nil config.Db this
+// package never initializes. Every test restoring to this instead of its
+// own captured "restore" value keeps any such stray command harmless
+// regardless of ordering.
+func testSafeProcessFn(ctx context.Context, id string, event string) (string, error) {
+	return event, nil
+}
+
+func TestMain(m *testing.M) {
+	processFn = testSafeProcessFn
+	os.Exit(m.Run())
+}
 
 // TestDispatchSerializesPerInstance is the key concurrency guarantee: many
 // events fired concurrently at ONE instance must be processed one at a time
@@ -110,7 +130,19 @@ func TestDispatchParallelAcrossInstances(t *testing.T) {
 }
 
 // TestDispatchContextCancel ensures a cancelled caller context unblocks a
-// synchronous Dispatch instead of hanging.
+// synchronous Dispatch instead of hanging. It first fills the target
+// actor's mailbox to capacity (mailboxBuffer background-context
+// DispatchAsync calls, plus one that occupies the actor itself, blocked
+// in the fake processFn) so enqueue's select for the already-cancelled
+// call has no room to race into the mailbox — deterministically forcing
+// the ctx.Done() branch instead of occasionally still placing the
+// cancelled command in the mailbox. It then closes release and issues one
+// more *synchronous* Dispatch, which — by the mailbox's strict FIFO order
+// — cannot return until every filler ahead of it has been processed. That
+// guarantees this test's own fake processFn (rather than the fake some
+// later test installs) is what drains them, so no leftover actor
+// goroutine survives this test to race against a different test's shared
+// counters.
 func TestDispatchContextCancel(t *testing.T) {
 	restore := processFn
 	defer func() { processFn = restore }()
@@ -120,11 +152,21 @@ func TestDispatchContextCancel(t *testing.T) {
 		<-release
 		return event, nil
 	}
-	defer close(release)
+
+	for i := 0; i < mailboxBuffer+1; i++ {
+		if err := DispatchAsync("cancel-instance", fmt.Sprintf("filler-%d", i)); err != nil {
+			t.Fatalf("filler dispatch %d: %v", i, err)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := Dispatch(ctx, "cancel-instance", "e"); err == nil {
 		t.Fatal("expected context cancellation error, got nil")
+	}
+
+	close(release)
+	if _, err := Dispatch(context.Background(), "cancel-instance", "drain-marker"); err != nil {
+		t.Fatalf("drain marker dispatch: %v", err)
 	}
 }
