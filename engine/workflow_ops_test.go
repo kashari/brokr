@@ -11,14 +11,14 @@ func TestMatchCommonTransition(t *testing.T) {
 	common := []model.CommonTransition{
 		{SourceList: []string{"a", "b"}, Target: "withdrawn", Event: "withdraw"},
 	}
-	got, ok := matchCommonTransition(common, "b", "withdraw")
+	got, ok := matchCommonTransition(common, "b", "withdraw", map[string]string{})
 	if !ok {
 		t.Fatal("expected a match")
 	}
 	if got.Target != "withdrawn" || got.Source != "b" {
 		t.Fatalf("got %+v", got)
 	}
-	if _, ok := matchCommonTransition(common, "c", "withdraw"); ok {
+	if _, ok := matchCommonTransition(common, "c", "withdraw", map[string]string{}); ok {
 		t.Fatal("expected no match for source not in list")
 	}
 }

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -13,31 +12,6 @@ import (
 	"github.com/kashari/brokr/persistence"
 	"github.com/kashari/golog"
 )
-
-// matchCommonTransition returns the first CommonTransition in common whose
-// SourceList contains sourceId and whose Event matches, synthesized into a
-// plain Transition so callers don't need two code paths.
-func matchCommonTransition(common []model.CommonTransition, sourceId, event string) (model.Transition, bool) {
-	for _, ct := range common {
-		if ct.Event != event {
-			continue
-		}
-		for _, s := range ct.SourceList {
-			if s == sourceId {
-				return model.Transition{
-					Source:       sourceId,
-					Target:       ct.Target,
-					Event:        ct.Event,
-					Trigger:      ct.Trigger,
-					Kind:         ct.Kind,
-					Guard:        ct.Guard,
-					EntryActions: ct.EntryActions,
-				}, true
-			}
-		}
-	}
-	return model.Transition{}, false
-}
 
 // NewWorkflowInstance creates a new workflow instance in the database based on the provided workflow definition.
 //
@@ -134,70 +108,36 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 			return result.Error
 		}
 
-		currentState := wf.CurrentState
-		golog.Info("Sending event [{}] to workflow instance [{}] in state [{}]", event, id, currentState.GetId())
+		golog.Info("Sending event [{}] to workflow instance [{}] in state [{}]", event, id, wf.CurrentState.State.GetId())
 
-		// Find the transition for the current state and event
-		var transition model.Transition
-		found := false
-		for _, t := range wf.WorkflowDefinition.Transitions {
-			if t.Source == currentState.GetId() && t.Event == event {
-				transition = t
-				found = true
-				break
-			}
+		ctxMap := wf.ContextMap
+		if ctxMap == nil {
+			ctxMap = make(map[string]string)
 		}
+
+		transition, found := findCandidateTransition(&wf, event, ctxMap)
 		if !found {
-			transition, found = matchCommonTransition(wf.WorkflowDefinition.CommonTransitions, currentState.GetId(), event)
+			return &errors.NoTransitionError{CurrentState: wf.CurrentState.State.GetId(), Event: event}
 		}
 
-		if !found {
-			return &errors.NoTransitionError{CurrentState: currentState.GetId(), Event: event}
-		}
-
-		if transition.Join {
+		if transition.IsJoin() {
 			complete, joinErr := allChildrenComplete(ctx, id)
 			if joinErr != nil {
 				return joinErr
 			}
 			if !complete {
-				return &errors.ChildrenNotCompleteError{CurrentState: currentState.GetId(), Event: event}
+				return &errors.ChildrenNotCompleteError{CurrentState: wf.CurrentState.State.GetId(), Event: event}
 			}
 		}
 
-		// Execute exit actions of the current state
-		ctxMap := wf.ContextMap
-		if ctxMap == nil {
-			ctxMap = make(map[string]string)
-		}
-		ctxMap, aerr := currentState.ExecuteExitActions(ctx, id, ctxMap)
+		var aerr error
+		ctxMap, aerr = applyTransition(ctx, id, &wf, transition, ctxMap)
 		if aerr != nil {
 			return aerr
 		}
 
-		// Update the current state to the target state of the transition
-		for _, state := range wf.WorkflowDefinition.States {
-			if state.GetId() == transition.Target {
-				wf.CurrentState = persistence.StateContainer{State: state}
-				break
-			}
-		}
-
-		// Execute entry actions of the new current state
-		ctxMap, aerr = wf.CurrentState.ExecuteEntryActions(ctx, id, ctxMap)
-		if aerr != nil {
-			return aerr
-		}
-
-		// Execute entry actions of the transition
-		ctxMap, aerr = model.ExecuteActions(ctx, id, ctxMap, transition.EntryActions)
-		if aerr != nil {
-			return aerr
-		}
-
-		wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", event, currentState.GetId(), wf.CurrentState.GetId())
-		wf.Complete = isEndState(wf)
 		wf.ContextMap = ctxMap
+		wf.Complete = isEndState(wf)
 		wf.Version++
 
 		if result := tx.Save(&wf); result.Error != nil {
