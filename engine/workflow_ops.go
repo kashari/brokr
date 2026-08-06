@@ -14,6 +14,28 @@ import (
 	"github.com/kashari/golog"
 )
 
+// matchCommonTransition returns the first CommonTransition in common whose
+// SourceList contains sourceId and whose Event matches, synthesized into a
+// plain Transition so callers don't need two code paths.
+func matchCommonTransition(common []model.CommonTransition, sourceId, event string) (model.Transition, bool) {
+	for _, ct := range common {
+		if ct.Event != event {
+			continue
+		}
+		for _, s := range ct.SourceList {
+			if s == sourceId {
+				return model.Transition{
+					Source:       sourceId,
+					Target:       ct.Target,
+					Event:        ct.Event,
+					EntryActions: ct.EntryActions,
+				}, true
+			}
+		}
+	}
+	return model.Transition{}, false
+}
+
 // NewWorkflowInstance creates a new workflow instance in the database based on the provided workflow definition.
 //
 // It generates a new UUID for the instance, sets the initial state, and saves it to the database,
@@ -122,6 +144,9 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 				break
 			}
 		}
+		if !found {
+			transition, found = matchCommonTransition(wf.WorkflowDefinition.CommonTransitions, currentState.GetId(), event)
+		}
 
 		if !found {
 			return &errors.NoTransitionError{CurrentState: currentState.GetId(), Event: event}
@@ -195,6 +220,14 @@ func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
 	for _, t := range wf.WorkflowDefinition.Transitions {
 		if t.Source == currentState.GetId() {
 			possibleEvents = append(possibleEvents, t.Event)
+		}
+	}
+	for _, ct := range wf.WorkflowDefinition.CommonTransitions {
+		for _, s := range ct.SourceList {
+			if s == currentState.GetId() {
+				possibleEvents = append(possibleEvents, ct.Event)
+				break
+			}
 		}
 	}
 
