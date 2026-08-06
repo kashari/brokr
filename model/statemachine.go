@@ -96,32 +96,80 @@ type State interface {
 	ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
 }
 
-type TransitionType string
+// TriggerType classifies who/what fires a transition's event — a UML
+// completion transition (AUTOMATIC, fires itself the instant its source
+// state is entered), a human-initiated one (USER), or one raised by an
+// external system/service (SYSTEM). workflow.json already authors real
+// data against these three values; this type makes the engine act on them
+// instead of silently ignoring them.
+type TriggerType string
 
 const (
-	ExternalTransition TransitionType = "ExternalTransition"
-	InternalTransition TransitionType = "InternalTransition"
-	ForkTransition     TransitionType = "ForkTransition"
-	JoinTransition     TransitionType = "JoinTransition"
+	AutomaticTrigger TriggerType = "AUTOMATIC"
+	UserTrigger      TriggerType = "USER"
+	SystemTrigger    TriggerType = "SYSTEM"
+)
+
+// TransitionKind is the UML transition kind: External (default — exit
+// source, enter target, the only behavior the engine had until this
+// field existed), Internal (effect only, no state change, no exit/entry),
+// Fork (spawns concurrent child regions, see ForkTargets), or Join
+// (gates on those regions completing, see Transition.IsJoin).
+type TransitionKind string
+
+const (
+	ExternalKind TransitionKind = "External"
+	InternalKind TransitionKind = "Internal"
+	ForkKind     TransitionKind = "Fork"
+	JoinKind     TransitionKind = "Join"
 )
 
 type Transition struct {
-	Type         TransitionType `json:"type"`
+	// Trigger is JSON field "type" — AUTOMATIC/USER/SYSTEM. Empty is
+	// treated as USER (today's behavior: fires only on an explicit
+	// Dispatch call).
+	Trigger TriggerType `json:"type,omitempty"`
+	// Kind is JSON field "kind" — External/Internal/Fork/Join. Empty is
+	// treated as External (today's only behavior).
+	Kind         TransitionKind `json:"kind,omitempty"`
 	Source       string         `json:"source"`
 	Target       string         `json:"target"`
 	Event        string         `json:"event"`
+	Guard        *Guard         `json:"guard,omitempty"`
 	EntryActions []Action       `json:"entryActions"`
-	// Join, if true, means this transition may only fire once every one of
-	// the instance's (non-withdrawn) children has reached one of its own
-	// workflow's EndStates.
+	// Join is the legacy boolean form of Kind == JoinKind, kept for
+	// backward compatibility with existing workflow definitions (see
+	// IsJoin). New definitions should prefer "kind":"Join".
 	Join bool `json:"join"`
+	// ForkTargets is only meaningful when Kind == ForkKind: the concurrent
+	// child regions spawned atomically when this transition fires. See
+	// Task 9.
+	ForkTargets []ForkTarget `json:"forkTargets,omitempty"`
+	// After, when non-empty and Trigger == AutomaticTrigger, defers firing
+	// by this Go duration string (e.g. "24h") instead of chaining
+	// immediately. See Task 10.
+	After string `json:"after,omitempty"` // parsed via time.ParseDuration; see Task 13
+	// EntersHistory, when the target is a CompositeState with History set,
+	// resolves entry via the composite's remembered substate instead of
+	// its InitialSubstate. See Task 14.
+	EntersHistory bool `json:"entersHistory,omitempty"`
+}
+
+// IsJoin reports whether t is a join point, honoring both the explicit
+// Kind field and the legacy Join bool so existing workflow definitions
+// (which only ever set Join) keep working unchanged.
+func (t Transition) IsJoin() bool {
+	return t.Kind == JoinKind || t.Join
 }
 
 type CommonTransition struct {
-	SourceList   []string `json:"sourceList"`
-	Target       string   `json:"target"`
-	Event        string   `json:"event"`
-	EntryActions []Action `json:"entryActions"`
+	SourceList   []string       `json:"sourceList"`
+	Target       string         `json:"target"`
+	Event        string         `json:"event"`
+	Trigger      TriggerType    `json:"type,omitempty"`
+	Kind         TransitionKind `json:"kind,omitempty"`
+	Guard        *Guard         `json:"guard,omitempty"`
+	EntryActions []Action       `json:"entryActions"`
 }
 
 type ActionType string
@@ -228,4 +276,16 @@ func ExecuteActions(ctx context.Context, token string, ctxMap map[string]string,
 		i++
 	}
 	return ctxMap, nil
+}
+
+// Guard and ForkTarget are defined fully in Task 4 / Task 9; this stub
+// keeps the package compiling in between.
+type Guard struct {
+	Key   string
+	Op    string
+	Value string
+}
+type ForkTarget struct {
+	Ref           string
+	ChildWorkflow *Workflow
 }

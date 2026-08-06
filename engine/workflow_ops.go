@@ -28,6 +28,9 @@ func matchCommonTransition(common []model.CommonTransition, sourceId, event stri
 					Source:       sourceId,
 					Target:       ct.Target,
 					Event:        ct.Event,
+					Trigger:      ct.Trigger,
+					Kind:         ct.Kind,
+					Guard:        ct.Guard,
 					EntryActions: ct.EntryActions,
 				}, true
 			}
