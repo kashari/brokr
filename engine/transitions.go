@@ -97,6 +97,13 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		return model.ExecuteActions(ctx, id, ctxMap, t.EntryActions)
 	}
 
+	// Stop the outgoing state's do-activity and pending deferred timers up
+	// front, on every hop (not just the final settled one) — a real event
+	// or an automatic hop leaving this state must cancel both before they
+	// have a chance to fire against a state the instance has already left.
+	stopDoActivity(id)
+	stopTimers(id)
+
 	fromId := wf.CurrentState.State.GetId()
 
 	ctxMap, err := wf.CurrentState.State.ExecuteExitActions(ctx, id, ctxMap)
@@ -146,8 +153,8 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		return ctxMap, err
 	}
 
-	stopDoActivity(id)
 	startDoActivity(id, wf.CurrentState.State.GetDoActions())
+	startTimers(id, findDeferredTransitions(wf.WorkflowDefinition, wf.CurrentState.State.GetId(), ctxMap))
 
 	wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", t.Event, fromId, wf.CurrentState.State.GetId())
 	return ctxMap, nil
@@ -176,8 +183,23 @@ func findAutomaticTransition(wfDef model.Workflow, sourceId string, ctxMap map[s
 	return model.Transition{}, false
 }
 
-// findDeferredTransitions is Task 13's counterpart: all AUTOMATIC
-// transitions out of sourceId with After > 0, whose Guard passes.
+// findDeferredTransitions returns every guard-passing AUTOMATIC
+// transition out of sourceId with a non-empty After — the counterpart to
+// findAutomaticTransition's zero-delay matches. A state may have more
+// than one (e.g. a reminder and a hard timeout).
+func findDeferredTransitions(wfDef model.Workflow, sourceId string, ctxMap map[string]string) []model.Transition {
+	var out []model.Transition
+	for _, t := range wfDef.Transitions {
+		if t.Source != sourceId || t.Trigger != model.AutomaticTrigger || t.After == "" {
+			continue
+		}
+		if !t.Guard.Evaluate(ctxMap) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
 
 // runAutomaticChain repeatedly applies findAutomaticTransition's match
 // against wf's new position until none matches, capped by

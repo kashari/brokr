@@ -81,5 +81,6 @@ func main() {
 	engine.Drain()
 	model.DrainAsyncPool()
 	engine.StopAllDoActivities()
+	engine.StopAllTimers()
 	golog.Info("Shutdown complete")
 }
