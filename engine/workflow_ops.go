@@ -130,7 +130,7 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 		}
 
 		if transition.IsJoin() {
-			complete, joinErr := allChildrenComplete(ctx, id)
+			complete, joinErr := allChildrenComplete(ctx, id, wf.PendingForkGeneration)
 			if joinErr != nil {
 				return joinErr
 			}

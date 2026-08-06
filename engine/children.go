@@ -134,19 +134,24 @@ func WithdrawChildWorkflowInstance(parentId, childId string) error {
 	return nil
 }
 
-// allChildrenComplete reports whether every (non-withdrawn) child of parentId
-// has reached one of its own workflow's end states. A parent with no children
-// is vacuously complete. This is a single SQL count over the persisted
-// Complete flag (set on each transition), so it no longer loads every child's
-// definition jsonb just to scan EndStates in Go. Soft-deleted (withdrawn)
-// children are excluded by GORM's default scope.
-func allChildrenComplete(ctx context.Context, parentId string) (bool, error) {
+// allChildrenComplete reports whether every (non-withdrawn) child of
+// parentId in forkGeneration has reached one of its own workflow's end
+// states. A parent with no such children is vacuously complete. When
+// forkGeneration is "" (an instance whose children were all created via
+// the ad hoc CreateChildWorkflowAction, never a formal Fork transition),
+// it falls back to counting every non-withdrawn child — today's exact
+// behavior, preserved for backward compatibility.
+func allChildrenComplete(ctx context.Context, parentId string, forkGeneration string) (bool, error) {
 	db := config.Db.WithContext(ctx)
 
+	q := db.Model(&persistence.WorkflowInstance{}).
+		Where("parent_id = ? AND complete = ?", parentId, false)
+	if forkGeneration != "" {
+		q = q.Where("fork_generation = ?", forkGeneration)
+	}
+
 	var incomplete int64
-	if result := db.Model(&persistence.WorkflowInstance{}).
-		Where("parent_id = ? AND complete = ?", parentId, false).
-		Count(&incomplete); result.Error != nil {
+	if result := q.Count(&incomplete); result.Error != nil {
 		return false, result.Error
 	}
 	return incomplete == 0, nil
