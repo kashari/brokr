@@ -150,3 +150,34 @@ func TestApplyTransitionForkStampsGenerationAndSetsPending(t *testing.T) {
 		t.Fatalf("CurrentState = %q, want waiting", wf.CurrentState.State.GetId())
 	}
 }
+
+func TestApplyTransitionForkWithEmptyForkTargetsErrors(t *testing.T) {
+	called := false
+	restore := createChildBatchFn
+	createChildBatchFn = func(parentId string, defs []model.Workflow, forkGeneration string) ([]string, error) {
+		called = true
+		return []string{"child-1"}, nil
+	}
+	defer func() { createChildBatchFn = restore }()
+
+	src := &model.SimpleState{Type: "SimpleState", Id: "review"}
+	wait := &model.SimpleState{Type: "SimpleState", Id: "waiting"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{States: []model.State{src, wait}},
+		CurrentState:       persistence.StateContainer{State: src},
+	}
+	tr := model.Transition{
+		Source: "review", Target: "waiting", Event: "split", Kind: model.ForkKind,
+		ForkTargets: nil,
+	}
+
+	if _, err := applyTransition(context.Background(), "parent-id", wf, tr, map[string]string{}); err == nil {
+		t.Fatal("expected an error for a fork transition with empty ForkTargets")
+	}
+	if called {
+		t.Fatal("createChildBatchFn must not be called when ForkTargets is empty")
+	}
+	if wf.PendingForkGeneration != "" {
+		t.Fatalf("PendingForkGeneration = %q, want empty (early return must happen before it's set)", wf.PendingForkGeneration)
+	}
+}

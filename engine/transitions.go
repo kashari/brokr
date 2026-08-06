@@ -115,6 +115,9 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		// a later join (Task 10/11) can tell which batch of children it's
 		// waiting on, then spawn them. t.Target is the "fork-and-wait"
 		// placeholder state the parent sits in until then.
+		if len(t.ForkTargets) == 0 {
+			return ctxMap, fmt.Errorf("fork transition %s->%s: forkTargets is empty (a fork must spawn at least one region)", t.Source, t.Target)
+		}
 		forkGen := uuid.New().String()
 		defs := make([]model.Workflow, len(t.ForkTargets))
 		for i, ft := range t.ForkTargets {
