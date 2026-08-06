@@ -105,10 +105,19 @@ func SendEventToWorkflowInstance(id string, event string) (newState string, err 
 func processEvent(ctx context.Context, id string, event string) (newState string, err error) {
 	db := config.Db.WithContext(ctx)
 	var wf persistence.WorkflowInstance
+	var justCompleted bool
 
 	defer func() {
 		if err == nil {
 			publishTransition(id, event, wf)
+			// Notify the parent's actor in its own goroutine — DispatchAsync
+			// can block if the parent's mailbox is momentarily full, and this
+			// runs after the transaction above has already committed (no lock
+			// held), so a slow/full parent mailbox can never stall this
+			// instance's own actor loop.
+			if justCompleted && wf.ParentId != nil {
+				go attemptAutoJoin(wf.ParentId.String())
+			}
 		}
 	}()
 
@@ -116,6 +125,7 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 		if result := tx.First(&wf, "id = ?", id); result.Error != nil {
 			return result.Error
 		}
+		wasComplete := wf.Complete
 
 		golog.Info("Sending event [{}] to workflow instance [{}] in state [{}]", event, id, wf.CurrentState.State.GetId())
 
@@ -153,6 +163,7 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 		wf.ContextMap = ctxMap
 		wf.Complete = isEndState(wf)
 		wf.Version++
+		justCompleted = !wasComplete && wf.Complete
 
 		if result := tx.Save(&wf); result.Error != nil {
 			return result.Error

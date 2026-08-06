@@ -55,7 +55,20 @@ type dispatcher struct {
 // processFn is the per-instance step the actor runs. It's a variable (rather
 // than a direct call to processEvent) so tests can substitute a fake and assert
 // the dispatcher's serialization/parallelism guarantees without a live DB.
-var processFn = processEvent
+//
+// Assigned in init() rather than at the declaration site: processEvent now
+// (transitively, via attemptAutoJoin -> DispatchAsync -> enqueue -> run)
+// reads processFn itself, so `var processFn = processEvent` would make the
+// compiler's static initializer-dependency analysis see processFn depending
+// on itself (a real "initialization cycle" build error, not a false
+// positive — Go's analysis follows function bodies, not just call timing).
+// Moving the assignment into init() breaks that edge: init() runs after all
+// package-level variables are initialized, so it's just a normal statement.
+var processFn func(ctx context.Context, id string, event string) (string, error)
+
+func init() {
+	processFn = processEvent
+}
 
 // inflight tracks commands accepted but not yet fully processed, so graceful
 // shutdown can wait for in-flight transitions to drain.
