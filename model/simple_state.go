@@ -51,3 +51,7 @@ func (s *SimpleState) ExecuteEntryActions(ctx context.Context, token string, ctx
 func (s *SimpleState) ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
 	return ctxMap, nil
 }
+
+func (s *SimpleState) GetDoActions() []Action {
+	return nil
+}

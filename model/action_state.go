@@ -13,6 +13,12 @@ type ActionState struct {
 	ExpectResponse bool     `json:"expectResponse"`
 	EntryActions   []Action `json:"entryActions"`
 	ExitActions    []Action `json:"exitActions"`
+	// DoActions run for as long as the instance stays in this state,
+	// cancelled the moment any transition leaves it (see engine's
+	// do-activity registry). Unlike EntryActions/ExitActions, a do-activity
+	// does not block the transition that starts it — it's UML's "activity
+	// concurrent with being in the state," not a state-change effect.
+	DoActions []Action `json:"doActions,omitempty"`
 }
 
 func (s *ActionState) IsResumable() bool {
@@ -53,4 +59,8 @@ func (s *ActionState) ExecuteEntryActions(ctx context.Context, token string, ctx
 
 func (s *ActionState) ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
 	return ExecuteActions(ctx, token, ctxMap, s.ExitActions)
+}
+
+func (s *ActionState) GetDoActions() []Action {
+	return s.DoActions
 }

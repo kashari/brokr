@@ -80,5 +80,6 @@ func main() {
 	}
 	engine.Drain()
 	model.DrainAsyncPool()
+	engine.StopAllDoActivities()
 	golog.Info("Shutdown complete")
 }

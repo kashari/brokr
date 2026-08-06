@@ -141,6 +141,11 @@ func (a *instanceActor) run(sh *shard) {
 			if a.pending == 0 {
 				delete(sh.actors, a.id)
 				sh.mu.Unlock()
+				// Belt-and-suspenders: normally a leaving-the-state
+				// transition already stopped any do-activity, but an
+				// instance parked at an end state with one still running
+				// should have it cleaned up once its actor is reaped.
+				stopDoActivity(a.id)
 				return
 			}
 			// A sender is mid-flight; keep serving.

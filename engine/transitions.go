@@ -146,6 +146,9 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		return ctxMap, err
 	}
 
+	stopDoActivity(id)
+	startDoActivity(id, wf.CurrentState.State.GetDoActions())
+
 	wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", t.Event, fromId, wf.CurrentState.State.GetId())
 	return ctxMap, nil
 }

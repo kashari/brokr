@@ -94,6 +94,7 @@ type State interface {
 	GetStatus() string
 	ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
 	ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
+	GetDoActions() []Action
 }
 
 // TriggerType classifies who/what fires a transition's event — a UML
