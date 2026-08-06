@@ -86,3 +86,27 @@ func TestApplyTransitionChainCycleGuard(t *testing.T) {
 	}
 	_ = ctxMap
 }
+
+func TestApplyTransitionInternalKindNoStateChange(t *testing.T) {
+	a := &model.ActionState{Type: "ActionState", Id: "a"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{States: []model.State{a}},
+		CurrentState:       persistence.StateContainer{State: a},
+	}
+	fired := false
+	tr := model.Transition{
+		Source: "a", Target: "a", Event: "ping", Kind: model.InternalKind,
+		EntryActions: []model.Action{{Type: model.SetContextMapAction, Variables: map[string]string{"pinged": "true"}}},
+	}
+	ctxMap, err := applyTransition(context.Background(), "test-id", wf, tr, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.CurrentState.State != model.State(a) {
+		t.Fatal("internal transition must not change CurrentState identity")
+	}
+	if ctxMap["pinged"] != "true" {
+		t.Fatal("internal transition's own EntryActions (the effect) must still run")
+	}
+	_ = fired
+}

@@ -85,6 +85,13 @@ func findCandidateTransition(wf *persistence.WorkflowInstance, event string, ctx
 // database — the caller (processEvent) persists wf once, after however
 // many transitions fire in one call (see Task 6).
 func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowInstance, t model.Transition, ctxMap map[string]string) (map[string]string, error) {
+	if t.Kind == model.InternalKind {
+		// UML internal transition: runs its own effect only. No exit, no
+		// state change, no entry — the state's own entry/exit actions
+		// never fire for a self-transition of this kind.
+		return model.ExecuteActions(ctx, id, ctxMap, t.EntryActions)
+	}
+
 	fromId := wf.CurrentState.State.GetId()
 
 	ctxMap, err := wf.CurrentState.State.ExecuteExitActions(ctx, id, ctxMap)
