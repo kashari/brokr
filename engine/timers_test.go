@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/kashari/brokr/model"
+	"github.com/kashari/brokr/persistence"
 )
 
 func TestFindDeferredTransitions(t *testing.T) {
@@ -16,7 +17,11 @@ func TestFindDeferredTransitions(t *testing.T) {
 			{Source: "a", Event: "manual", Target: "e"},
 		},
 	}
-	got := findDeferredTransitions(def, "a", nil)
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: def,
+		CurrentState:       persistence.StateContainer{State: &model.SimpleState{Type: "SimpleState", Id: "a"}},
+	}
+	got := findDeferredTransitions(wf, nil)
 	if len(got) != 2 {
 		t.Fatalf("got %d deferred transitions, want 2 (immediate/manual must be excluded)", len(got))
 	}

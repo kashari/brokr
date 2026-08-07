@@ -58,12 +58,108 @@ func TestFindAutomaticTransition(t *testing.T) {
 			{Source: "a", Event: "deferred", Target: "d", Trigger: model.AutomaticTrigger, After: "1h"},
 		},
 	}
-	got, ok := findAutomaticTransition(def, "a", nil)
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: def,
+		CurrentState:       persistence.StateContainer{State: &model.SimpleState{Type: "SimpleState", Id: "a"}},
+	}
+	got, ok := findAutomaticTransition(wf, nil)
 	if !ok || got.Event != "auto1" {
 		t.Fatalf("got %+v, ok=%v, want auto1 (deferred one must be skipped here)", got, ok)
 	}
-	if _, ok := findAutomaticTransition(def, "b", nil); ok {
+	wf.CurrentState = persistence.StateContainer{State: &model.SimpleState{Type: "SimpleState", Id: "b"}}
+	if _, ok := findAutomaticTransition(wf, nil); ok {
 		t.Fatal("no automatic transition from b, expected none")
+	}
+}
+
+func TestApplyTransitionEntersAndLeavesComposite(t *testing.T) {
+	collecting := &model.SimpleState{Type: "SimpleState", Id: "collecting"}
+	verifying := &model.ActionState{Type: "ActionState", Id: "verifying"}
+	comp := &model.CompositeState{
+		Type: "CompositeState", Id: "review", InitialSubstate: "collecting",
+		Substates:      []model.State{collecting, verifying},
+		SubTransitions: []model.Transition{{Source: "collecting", Target: "verifying", Event: "submit"}},
+		History:        model.ShallowHistory,
+	}
+	start := &model.SimpleState{Type: "SimpleState", Id: "start"}
+	done := &model.SimpleState{Type: "SimpleState", Id: "done"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{
+			States: []model.State{start, comp, done},
+			Transitions: []model.Transition{
+				{Source: "start", Target: "review", Event: "begin"},
+				{Source: "review", Target: "done", Event: "abandon"},
+			},
+		},
+		CurrentState: persistence.StateContainer{State: start},
+	}
+
+	// Enter the composite: lands on its InitialSubstate.
+	t1, ok := findCandidateTransition(wf, "begin", nil)
+	if !ok {
+		t.Fatal("expected to find begin transition")
+	}
+	if _, err := applyTransition(context.Background(), "id", wf, t1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if wf.CurrentState.EffectiveId() != "collecting" {
+		t.Fatalf("EffectiveId() = %q, want collecting (composite's InitialSubstate)", wf.CurrentState.EffectiveId())
+	}
+
+	// Move within the composite via a SubTransition (local).
+	t2, ok := findCandidateTransition(wf, "submit", nil)
+	if !ok {
+		t.Fatal("expected to find submit sub-transition")
+	}
+	if _, err := applyTransition(context.Background(), "id", wf, t2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if wf.CurrentState.EffectiveId() != "verifying" || wf.CurrentState.State.GetId() != "review" {
+		t.Fatalf("got state=%q substate=%q, want review/verifying", wf.CurrentState.State.GetId(), wf.CurrentState.EffectiveId())
+	}
+
+	// Leave the composite: history must record "verifying" as the last active substate.
+	t3, ok := findCandidateTransition(wf, "abandon", nil)
+	if !ok {
+		t.Fatal("expected to find abandon transition (bubbled out of the composite)")
+	}
+	if _, err := applyTransition(context.Background(), "id", wf, t3, nil); err != nil {
+		t.Fatal(err)
+	}
+	if wf.CurrentState.EffectiveId() != "done" {
+		t.Fatalf("EffectiveId() = %q, want done", wf.CurrentState.EffectiveId())
+	}
+	if wf.CompositeHistory["review"] != "verifying" {
+		t.Fatalf("CompositeHistory[review] = %q, want verifying", wf.CompositeHistory["review"])
+	}
+}
+
+func TestApplyTransitionEntersHistoryOnReentry(t *testing.T) {
+	collecting := &model.SimpleState{Type: "SimpleState", Id: "collecting"}
+	verifying := &model.ActionState{Type: "ActionState", Id: "verifying"}
+	comp := &model.CompositeState{
+		Type: "CompositeState", Id: "review", InitialSubstate: "collecting",
+		Substates: []model.State{collecting, verifying},
+		History:   model.ShallowHistory,
+	}
+	elsewhere := &model.SimpleState{Type: "SimpleState", Id: "elsewhere"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{States: []model.State{comp, elsewhere}},
+		CurrentState:       persistence.StateContainer{State: comp, Substate: verifying},
+		CompositeHistory:   map[string]string{"review": "verifying"},
+	}
+	tr := model.Transition{Source: "review", Target: "elsewhere", Event: "leave"}
+	if _, err := applyTransition(context.Background(), "id", wf, tr, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	reenter := model.Transition{Source: "elsewhere", Target: "review", Event: "back", EntersHistory: true}
+	wf.WorkflowDefinition.Transitions = []model.Transition{reenter}
+	if _, err := applyTransition(context.Background(), "id", wf, reenter, nil); err != nil {
+		t.Fatal(err)
+	}
+	if wf.CurrentState.EffectiveId() != "verifying" {
+		t.Fatalf("EffectiveId() = %q, want verifying (resumed from history, not InitialSubstate)", wf.CurrentState.EffectiveId())
 	}
 }
 
