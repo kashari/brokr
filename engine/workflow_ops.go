@@ -174,8 +174,8 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 		return "", txErr
 	}
 
-	golog.Info("Workflow instance [{}] transitioned to state [{}]", id, wf.CurrentState.GetId())
-	return wf.CurrentState.GetId(), nil
+	golog.Info("Workflow instance [{}] transitioned to state [{}]", id, wf.CurrentState.State.GetId())
+	return wf.CurrentState.State.GetId(), nil
 }
 
 func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
@@ -187,17 +187,17 @@ func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
 	}
 
 	currentState := wf.CurrentState
-	golog.Info("Getting possible events for workflow instance [{}] in state [{}]", id, currentState.GetId())
+	golog.Info("Getting possible events for workflow instance [{}] in state [{}]", id, currentState.State.GetId())
 
 	var possibleEvents []string
 	for _, t := range wf.WorkflowDefinition.Transitions {
-		if t.Source == currentState.GetId() {
+		if t.Source == currentState.State.GetId() {
 			possibleEvents = append(possibleEvents, t.Event)
 		}
 	}
 	for _, ct := range wf.WorkflowDefinition.CommonTransitions {
 		for _, s := range ct.SourceList {
-			if s == currentState.GetId() {
+			if s == currentState.State.GetId() {
 				possibleEvents = append(possibleEvents, ct.Event)
 				break
 			}

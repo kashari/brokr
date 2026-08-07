@@ -20,6 +20,13 @@ type WorkflowInstance struct {
 	// SetContextMapAction or an ExpectResponse HTTP action), and saves the
 	// result back in the same write that persists the new CurrentState.
 	ContextMap map[string]string `json:"contextMap" gorm:"type:jsonb;serializer:json"`
+	// CompositeHistory remembers, per CompositeState id, the substate id
+	// that was active when the instance last left that composite. Only
+	// consulted when a transition targets the composite with
+	// EntersHistory set and the composite's History is shallow/deep
+	// (Task 16); otherwise entry always uses the composite's
+	// InitialSubstate, ignoring this.
+	CompositeHistory map[string]string `json:"compositeHistory,omitempty" gorm:"type:jsonb;serializer:json"`
 	// Version is bumped on every persisted transition. It's an optimistic
 	// concurrency marker: the actor-per-instance dispatcher already serializes
 	// writes to one instance, so a stale Version would signal a serialization

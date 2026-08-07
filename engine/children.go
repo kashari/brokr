@@ -162,7 +162,7 @@ func isEndState(wf persistence.WorkflowInstance) bool {
 		return false
 	}
 	for _, end := range wf.WorkflowDefinition.EndStates {
-		if end == wf.CurrentState.GetId() {
+		if end == wf.CurrentState.State.GetId() {
 			return true
 		}
 	}
