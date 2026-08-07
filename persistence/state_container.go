@@ -86,6 +86,18 @@ func (c *StateContainer) Scan(value any) error {
 	if err := json.Unmarshal(data, &env); err != nil {
 		return fmt.Errorf("unmarshal state envelope: %w", err)
 	}
+	if len(env.State) == 0 {
+		// Legacy rows (written before Substate/the envelope existed) stored
+		// the bare state object, which has no "state" key — decode the raw
+		// bytes as the state itself rather than failing on empty input.
+		state, err := model.DecodeState(data)
+		if err != nil {
+			return err
+		}
+		c.State = state
+		c.Substate = nil
+		return nil
+	}
 	state, err := model.DecodeState(env.State)
 	if err != nil {
 		return err
