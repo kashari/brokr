@@ -30,17 +30,21 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 	db := config.Db
 	id := uuid.New()
 	golog.Info("Creating new workflow instance [{} -> {}] v. {}", id.String(), workflowDefinition.Id, workflowDefinition.Version)
+	initState, initSub, err := resolveInitialPosition(workflowDefinition.States[0])
+	if err != nil {
+		return uuid.Nil, err
+	}
 	wf := &persistence.WorkflowInstance{
 		Id:                 id,
 		WorkflowDefinition: workflowDefinition,
-		CurrentState:       persistence.StateContainer{State: workflowDefinition.States[0]},
+		CurrentState:       persistence.StateContainer{State: initState, Substate: initSub},
 		LastTransition:     "",
 	}
 	// Chain any AUTOMATIC transitions out of the initial state before the
 	// instance is ever persisted — nothing is saved yet, so running the
 	// chain in-memory and creating once is simpler than wrapping this in
 	// a transaction the way processEvent has to.
-	ctxMap, err := runAutomaticChain(context.Background(), id.String(), wf, make(map[string]string))
+	ctxMap, _, err := runAutomaticChain(context.Background(), id.String(), wf, make(map[string]string))
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -49,6 +53,12 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 	if result := db.Create(wf); result.Error != nil {
 		return uuid.Nil, result.Error
 	}
+	// Arm the settled state's do-activity and deferred-transition timers.
+	// Only applyTransition used to do this, so an instance whose initial
+	// state carried doActions or an AUTOMATIC-with-after transition never
+	// armed either. Done after the insert commits, so nothing runs against
+	// a state the database does not hold (see armStateActivities).
+	armStateActivities(id.String(), wf, ctxMap)
 	return id, nil
 }
 
@@ -116,9 +126,17 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 	db := config.Db.WithContext(ctx)
 	var wf persistence.WorkflowInstance
 	var justCompleted bool
+	var moved bool
 
 	defer func() {
 		if err == nil {
+			// Arm do-activity/timers only for the state the transaction
+			// actually committed. applyTransition stops the departing
+			// state's inline (harmless under rollback) but deliberately
+			// leaves the start side to here — see armStateActivities.
+			if moved {
+				armStateActivities(id, &wf, wf.ContextMap)
+			}
 			publishTransition(id, event, wf)
 			// Notify the parent's actor in its own goroutine — DispatchAsync
 			// can block if the parent's mailbox is momentarily full, and this
@@ -126,6 +144,11 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 			// held), so a slow/full parent mailbox can never stall this
 			// instance's own actor loop.
 			if justCompleted && wf.ParentId != nil {
+				// Tracked by inflight for its whole lifetime: attemptAutoJoin
+				// itself calls DispatchAsync -> enqueue -> inflight.Add(1), and
+				// a positive Add that starts once the counter has hit zero must
+				// not race a returning Drain()/Wait(). Add here, Done inside.
+				inflight.Add(1)
 				go attemptAutoJoin(wf.ParentId.String())
 			}
 		}
@@ -160,15 +183,17 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 		}
 
 		var aerr error
-		ctxMap, aerr = applyTransition(ctx, id, &wf, transition, ctxMap)
+		var applyMoved, chainMoved bool
+		ctxMap, applyMoved, aerr = applyTransition(ctx, id, &wf, transition, ctxMap)
 		if aerr != nil {
 			return aerr
 		}
 
-		ctxMap, aerr = runAutomaticChain(ctx, id, &wf, ctxMap)
+		ctxMap, chainMoved, aerr = runAutomaticChain(ctx, id, &wf, ctxMap)
 		if aerr != nil {
 			return aerr
 		}
+		moved = applyMoved || chainMoved
 
 		wf.ContextMap = ctxMap
 		wf.Complete = isEndState(wf)

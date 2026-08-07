@@ -10,11 +10,19 @@ import (
 )
 
 // findPendingJoinTransition returns the first Kind == JoinKind (or legacy
-// Join: true) transition out of sourceId, if any.
-func findPendingJoinTransition(wfDef model.Workflow, sourceId string) (model.Transition, bool) {
-	for _, t := range wfDef.Transitions {
-		if t.Source == sourceId && t.IsJoin() {
-			return t, true
+// Join: true) transition out of wf's current position, if any. It scopes
+// the search exactly the way findCandidateTransition does (see
+// transitionScopes): a composite's SubTransitions are searched against the
+// active substate before the workflow's top-level Transitions. Without
+// that scoping a join authored inside a composite would fire when a client
+// sent the event by hand but never automatically — "joins work in testing,
+// hang in production".
+func findPendingJoinTransition(wf *persistence.WorkflowInstance) (model.Transition, bool) {
+	for _, sc := range transitionScopes(wf) {
+		for _, t := range sc.transitions {
+			if t.Source == sc.sourceId && t.IsJoin() {
+				return t, true
+			}
 		}
 	}
 	return model.Transition{}, false
@@ -27,7 +35,13 @@ func findPendingJoinTransition(wfDef model.Workflow, sourceId string) (model.Tra
 // actions, and persistence all run through processEvent exactly as if a
 // client had sent the event, just triggered by a sibling completing
 // instead of an HTTP request.
+// The caller must inflight.Add(1) before spawning it; the matching Done is
+// deferred here so the goroutine stays counted right through its own
+// DispatchAsync (which does its own Add), closing the shutdown race where
+// Drain() could return between the two.
 func attemptAutoJoin(parentId string) {
+	defer inflight.Done()
+
 	ctx := context.Background()
 	db := config.Db.WithContext(ctx)
 
@@ -37,7 +51,7 @@ func attemptAutoJoin(parentId string) {
 		return
 	}
 
-	t, ok := findPendingJoinTransition(parent.WorkflowDefinition, parent.CurrentState.State.GetId())
+	t, ok := findPendingJoinTransition(&parent)
 	if !ok {
 		return
 	}

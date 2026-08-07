@@ -41,6 +41,11 @@ func createChildWorkflowInstance(parentId string, childDefinition model.Workflow
 		return uuid.Nil, err
 	}
 
+	initState, initSub, err := resolveInitialPosition(childDefinition.States[0])
+	if err != nil {
+		return uuid.Nil, err
+	}
+
 	id := uuid.New()
 	golog.Info("Creating child workflow instance [{}] under parent [{}]", id.String(), parentId)
 	child := &persistence.WorkflowInstance{
@@ -48,12 +53,15 @@ func createChildWorkflowInstance(parentId string, childDefinition model.Workflow
 		ParentId:           &parentUUID,
 		ForkGeneration:     forkGeneration,
 		WorkflowDefinition: childDefinition,
-		CurrentState:       persistence.StateContainer{State: childDefinition.States[0]},
+		CurrentState:       persistence.StateContainer{State: initState, Substate: initSub},
 	}
 	child.Complete = isEndState(*child)
 	if result := db.Create(child); result.Error != nil {
 		return uuid.Nil, result.Error
 	}
+	// Arm the initial state's do-activity/timers, once the insert has
+	// committed — same rationale as NewWorkflowInstance.
+	armStateActivities(id.String(), child, child.ContextMap)
 	return id, nil
 }
 

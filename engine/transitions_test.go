@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/kashari/brokr/model"
 	"github.com/kashari/brokr/persistence"
@@ -40,7 +41,7 @@ func TestApplyTransitionRunsActionsInOrder(t *testing.T) {
 	}
 	tr := model.Transition{Source: "a", Target: "b", Event: "go"}
 
-	ctxMap, err := applyTransition(context.Background(), "test-id", wf, tr, map[string]string{})
+	ctxMap, _, err := applyTransition(context.Background(), "test-id", wf, tr, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestApplyTransitionEntersAndLeavesComposite(t *testing.T) {
 	if !ok {
 		t.Fatal("expected to find begin transition")
 	}
-	if _, err := applyTransition(context.Background(), "id", wf, t1, nil); err != nil {
+	if _, _, err := applyTransition(context.Background(), "id", wf, t1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if wf.CurrentState.EffectiveId() != "collecting" {
@@ -111,7 +112,7 @@ func TestApplyTransitionEntersAndLeavesComposite(t *testing.T) {
 	if !ok {
 		t.Fatal("expected to find submit sub-transition")
 	}
-	if _, err := applyTransition(context.Background(), "id", wf, t2, nil); err != nil {
+	if _, _, err := applyTransition(context.Background(), "id", wf, t2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if wf.CurrentState.EffectiveId() != "verifying" || wf.CurrentState.State.GetId() != "review" {
@@ -123,7 +124,7 @@ func TestApplyTransitionEntersAndLeavesComposite(t *testing.T) {
 	if !ok {
 		t.Fatal("expected to find abandon transition (bubbled out of the composite)")
 	}
-	if _, err := applyTransition(context.Background(), "id", wf, t3, nil); err != nil {
+	if _, _, err := applyTransition(context.Background(), "id", wf, t3, nil); err != nil {
 		t.Fatal(err)
 	}
 	if wf.CurrentState.EffectiveId() != "done" {
@@ -149,13 +150,13 @@ func TestApplyTransitionEntersHistoryOnReentry(t *testing.T) {
 		CompositeHistory:   map[string]string{"review": "verifying"},
 	}
 	tr := model.Transition{Source: "review", Target: "elsewhere", Event: "leave"}
-	if _, err := applyTransition(context.Background(), "id", wf, tr, nil); err != nil {
+	if _, _, err := applyTransition(context.Background(), "id", wf, tr, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	reenter := model.Transition{Source: "elsewhere", Target: "review", Event: "back", EntersHistory: true}
 	wf.WorkflowDefinition.Transitions = []model.Transition{reenter}
-	if _, err := applyTransition(context.Background(), "id", wf, reenter, nil); err != nil {
+	if _, _, err := applyTransition(context.Background(), "id", wf, reenter, nil); err != nil {
 		t.Fatal(err)
 	}
 	if wf.CurrentState.EffectiveId() != "verifying" {
@@ -176,7 +177,7 @@ func TestApplyTransitionChainCycleGuard(t *testing.T) {
 		},
 		CurrentState: persistence.StateContainer{State: a},
 	}
-	ctxMap, err := runAutomaticChain(context.Background(), "test-id", wf, map[string]string{})
+	ctxMap, _, err := runAutomaticChain(context.Background(), "test-id", wf, map[string]string{})
 	if err == nil {
 		t.Fatal("expected cycle-guard error, got nil")
 	}
@@ -194,7 +195,7 @@ func TestApplyTransitionInternalKindNoStateChange(t *testing.T) {
 		Source: "a", Target: "a", Event: "ping", Kind: model.InternalKind,
 		EntryActions: []model.Action{{Type: model.SetContextMapAction, Variables: map[string]string{"pinged": "true"}}},
 	}
-	ctxMap, err := applyTransition(context.Background(), "test-id", wf, tr, map[string]string{})
+	ctxMap, _, err := applyTransition(context.Background(), "test-id", wf, tr, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +234,7 @@ func TestApplyTransitionForkStampsGenerationAndSetsPending(t *testing.T) {
 		},
 	}
 
-	if _, err := applyTransition(context.Background(), "parent-id", wf, tr, map[string]string{}); err != nil {
+	if _, _, err := applyTransition(context.Background(), "parent-id", wf, tr, map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(created) != 2 {
@@ -267,7 +268,7 @@ func TestApplyTransitionForkWithEmptyForkTargetsErrors(t *testing.T) {
 		ForkTargets: nil,
 	}
 
-	if _, err := applyTransition(context.Background(), "parent-id", wf, tr, map[string]string{}); err == nil {
+	if _, _, err := applyTransition(context.Background(), "parent-id", wf, tr, map[string]string{}); err == nil {
 		t.Fatal("expected an error for a fork transition with empty ForkTargets")
 	}
 	if called {
@@ -275,5 +276,95 @@ func TestApplyTransitionForkWithEmptyForkTargetsErrors(t *testing.T) {
 	}
 	if wf.PendingForkGeneration != "" {
 		t.Fatalf("PendingForkGeneration = %q, want empty (early return must happen before it's set)", wf.PendingForkGeneration)
+	}
+}
+
+func TestResolveInitialPositionEntersCompositeInitialSubstate(t *testing.T) {
+	collecting := &model.SimpleState{Type: "SimpleState", Id: "collecting"}
+	verifying := &model.ActionState{Type: "ActionState", Id: "verifying"}
+	comp := &model.CompositeState{
+		Type: "CompositeState", Id: "review", InitialSubstate: "collecting",
+		Substates:      []model.State{collecting, verifying},
+		SubTransitions: []model.Transition{{Source: "collecting", Target: "verifying", Event: "submit"}},
+	}
+	def := model.Workflow{States: []model.State{comp}}
+
+	// This is exactly what NewWorkflowInstance/CreateChildWorkflowInstance do
+	// to build a new instance's StateContainer.
+	state, sub, err := resolveInitialPosition(def.States[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: def,
+		CurrentState:       persistence.StateContainer{State: state, Substate: sub},
+	}
+	if wf.CurrentState.State.GetId() != "review" {
+		t.Fatalf("State.GetId() = %q, want review", wf.CurrentState.State.GetId())
+	}
+	if wf.CurrentState.EffectiveId() != "collecting" {
+		t.Fatalf("EffectiveId() = %q, want collecting (the composite's InitialSubstate)", wf.CurrentState.EffectiveId())
+	}
+	// With Substate resolved, the composite's SubTransitions are in scope.
+	if _, ok := findCandidateTransition(wf, "submit", nil); !ok {
+		t.Fatal("composite SubTransitions must be reachable from a freshly-created instance")
+	}
+}
+
+func TestResolveInitialPositionLeavesSimpleStateAlone(t *testing.T) {
+	s := &model.SimpleState{Type: "SimpleState", Id: "start"}
+	state, sub, err := resolveInitialPosition(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != model.State(s) || sub != nil {
+		t.Fatalf("got (%v, %v), want (start, nil)", state, sub)
+	}
+}
+
+func TestResolveInitialPositionRejectsMissingInitialSubstate(t *testing.T) {
+	comp := &model.CompositeState{Type: "CompositeState", Id: "review", InitialSubstate: "nope"}
+	if _, _, err := resolveInitialPosition(comp); err == nil {
+		t.Fatal("expected an error when the composite's InitialSubstate does not exist")
+	}
+}
+
+// applyTransition must not arm the new state's do-activity itself — that
+// happens inside processEvent's DB transaction, which may still roll back.
+// Arming is the caller's job, via armStateActivities, after commit.
+func TestApplyTransitionDefersDoActivityArmingToCaller(t *testing.T) {
+	started := make(chan []model.Action, 4)
+	restore := doActivityRunFn
+	doActivityRunFn = func(ctx context.Context, id string, actions []model.Action) { started <- actions }
+	defer func() { doActivityRunFn = restore }()
+	defer stopDoActivity("arm-test")
+
+	src := &model.SimpleState{Type: "SimpleState", Id: "a"}
+	dst := &model.ActionState{
+		Type: "ActionState", Id: "b",
+		DoActions: []model.Action{{Type: model.SetContextMapAction, Variables: map[string]string{"k": "v"}}},
+	}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{States: []model.State{src, dst}},
+		CurrentState:       persistence.StateContainer{State: src},
+	}
+
+	if _, _, err := applyTransition(context.Background(), "arm-test", wf, model.Transition{Source: "a", Target: "b", Event: "go"}, map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case a := <-started:
+		t.Fatalf("applyTransition started a do-activity (%v); it must wait for the caller's armStateActivities", a)
+	default:
+	}
+
+	armStateActivities("arm-test", wf, map[string]string{})
+	select {
+	case a := <-started:
+		if len(a) != 1 {
+			t.Fatalf("armStateActivities started %d actions, want 1", len(a))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("armStateActivities did not start the settled state's do-activity")
 	}
 }

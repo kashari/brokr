@@ -37,7 +37,9 @@ func stopDoActivity(instanceId string) {
 // until stopDoActivity(instanceId) is called (on leaving the state, actor
 // eviction, or shutdown) or the process exits. A no-op when actions is
 // empty. Callers must call stopDoActivity for the *previous* state before
-// calling startDoActivity for the new one (applyTransition does this).
+// calling startDoActivity for the new one: applyTransition does the stop
+// when it leaves a state, and armStateActivities does the start once the
+// new state is actually committed.
 func startDoActivity(instanceId string, actions []model.Action) {
 	if len(actions) == 0 {
 		return
