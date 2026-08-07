@@ -53,9 +53,13 @@ func TestPossibleEventsExcludesAutomaticIncludesCommonAndGuarded(t *testing.T) {
 }
 
 func TestProcessEventUsesCommonTransitions(t *testing.T) {
-	// processEvent needs a live DB (see docker-compose db). This test is
-	// skipped without one; it documents the contract for the integration
-	// suite and is exercised by the fixture test added in Task 12.
-	t.Skip("covered end-to-end by TestWorkflowJSONFixture (Task 12) and manual verification below")
+	// processEvent itself needs a live DB (see docker-compose db) and has no
+	// automated coverage. The closest thing is
+	// TestWorkflowJSONFixtureDrivesRealTransitions, which drives the same
+	// functions processEvent calls (findCandidateTransition, applyTransition,
+	// runAutomaticChain) over the real workflow.json — including a common
+	// transition — but without the GORM transaction, the actor dispatch, or
+	// the post-commit publish/arm defer. Those three remain unverified.
+	t.Skip("no DB-backed coverage: processEvent's transaction, dispatch and post-commit defer are only manually verified")
 	_ = context.Background()
 }

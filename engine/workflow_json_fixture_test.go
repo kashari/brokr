@@ -1,15 +1,20 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/kashari/brokr/model"
+	"github.com/kashari/brokr/persistence"
 )
 
-func TestWorkflowJSONFixtureParsesAndIsInternallyConsistent(t *testing.T) {
+// loadWorkflowFixture parses the repo's workflow.json — the real
+// production definition — into a model.Workflow.
+func loadWorkflowFixture(t *testing.T) model.Workflow {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "workflow.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -18,6 +23,11 @@ func TestWorkflowJSONFixtureParsesAndIsInternallyConsistent(t *testing.T) {
 	if err := json.Unmarshal(data, &wf); err != nil {
 		t.Fatalf("workflow.json failed to parse: %v", err)
 	}
+	return wf
+}
+
+func TestWorkflowJSONFixtureParsesAndIsInternallyConsistent(t *testing.T) {
+	wf := loadWorkflowFixture(t)
 
 	ids := make(map[string]bool, len(wf.States))
 	for _, s := range wf.States {
@@ -64,5 +74,73 @@ func TestWorkflowJSONFixtureParsesAndIsInternallyConsistent(t *testing.T) {
 	}
 	if len(wf.CommonTransitions) != 3 {
 		t.Errorf("got %d commonTransitions, want 3", len(wf.CommonTransitions))
+	}
+}
+
+// TestWorkflowJSONFixtureDrivesRealTransitions exercises the exact
+// functions processEvent calls — resolveInitialPosition, findCandidateTransition,
+// applyTransition, runAutomaticChain — against the real workflow.json,
+// without the GORM transaction wrapper (and so without a live DB). The
+// sibling test above is purely structural; this one actually moves an
+// instance through the state machine.
+func TestWorkflowJSONFixtureDrivesRealTransitions(t *testing.T) {
+	def := loadWorkflowFixture(t)
+
+	// Build the instance the way NewWorkflowInstance does.
+	state, sub, err := resolveInitialPosition(def.States[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: def,
+		CurrentState:       persistence.StateContainer{State: state, Substate: sub},
+	}
+	if wf.CurrentState.EffectiveId() != def.InitialState {
+		t.Fatalf("initial EffectiveId() = %q, want %q", wf.CurrentState.EffectiveId(), def.InitialState)
+	}
+
+	// application_started has a single AUTOMATIC transition out of it, so a
+	// freshly-created instance must never come to rest there.
+	ctxMap, moved, err := runAutomaticChain(context.Background(), "fixture-id", wf, map[string]string{})
+	if err != nil {
+		t.Fatalf("automatic chain out of %q failed: %v", def.InitialState, err)
+	}
+	if !moved {
+		t.Fatal("expected the initial AUTOMATIC transition to fire")
+	}
+	if got := wf.CurrentState.EffectiveId(); got != "applicant_type_selection" {
+		t.Fatalf("after the automatic chain, state = %q, want applicant_type_selection", got)
+	}
+
+	// A common transition ("withdraw", authored against a sourceList that
+	// includes applicant_type_selection) must resolve and apply.
+	tr, ok := findCandidateTransition(wf, "withdraw", ctxMap)
+	if !ok {
+		t.Fatalf("no candidate transition for withdraw from %q", wf.CurrentState.EffectiveId())
+	}
+	if tr.Target != "application_withdrawn" {
+		t.Fatalf("withdraw resolved to target %q, want application_withdrawn", tr.Target)
+	}
+	ctxMap, moved, err = applyTransition(context.Background(), "fixture-id", wf, tr, ctxMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !moved {
+		t.Fatal("withdraw is an external transition; applyTransition must report a move")
+	}
+	if wf.CurrentState.EffectiveId() != "application_withdrawn" {
+		t.Fatalf("state = %q, want application_withdrawn", wf.CurrentState.EffectiveId())
+	}
+	if wf.LastTransition == "" {
+		t.Fatal("LastTransition must be stamped by applyTransition")
+	}
+
+	// application_withdrawn is an end state, so the instance is complete and
+	// offers no further events.
+	if !isEndState(*wf) {
+		t.Fatal("application_withdrawn must be recognised as an end state")
+	}
+	if events := possibleEventsFor(wf, ctxMap); len(events) != 0 {
+		t.Fatalf("possibleEventsFor(end state) = %v, want none", events)
 	}
 }
