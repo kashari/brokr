@@ -5,6 +5,8 @@ import (
 	"hash/fnv"
 	"sync"
 	"time"
+
+	"github.com/kashari/golog"
 )
 
 // The dispatcher is an actor-per-instance scheduler. Events for different
@@ -129,6 +131,11 @@ func (a *instanceActor) run(sh *shard) {
 			newState, err := processFn(cmd.ctx, a.id, cmd.event)
 			if cmd.reply != nil {
 				cmd.reply <- result{newState: newState, err: err}
+			} else if err != nil {
+				// Fire-and-forget path (DispatchAsync: timer-fired deferred
+				// transitions, auto-join). Nobody is waiting on the result, so
+				// without this the failure would vanish entirely.
+				golog.Error("async transition [{}] event [{}] failed: {}", a.id, cmd.event, err.Error())
 			}
 			sh.mu.Lock()
 			a.pending--
