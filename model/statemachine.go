@@ -25,8 +25,9 @@ type Workflow struct {
 // SimpleStateType and ActionStateType are the "type" discriminator values
 // expected on each element of Workflow.States.
 const (
-	SimpleStateType = "SimpleState"
-	ActionStateType = "ActionState"
+	SimpleStateType    = "SimpleState"
+	ActionStateType    = "ActionState"
+	CompositeStateType = "CompositeState"
 )
 
 // DecodeState unmarshals a single JSON state object into its concrete State
@@ -44,6 +45,12 @@ func DecodeState(data []byte) (State, error) {
 		var s ActionState
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("decode ActionState: %w", err)
+		}
+		return &s, nil
+	case CompositeStateType:
+		var s CompositeState
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, fmt.Errorf("decode CompositeState: %w", err)
 		}
 		return &s, nil
 	case SimpleStateType, "":
