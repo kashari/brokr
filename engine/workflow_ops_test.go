@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/kashari/brokr/model"
+	"github.com/kashari/brokr/persistence"
 )
 
 func TestMatchCommonTransition(t *testing.T) {
@@ -20,6 +21,34 @@ func TestMatchCommonTransition(t *testing.T) {
 	}
 	if _, ok := matchCommonTransition(common, "c", "withdraw", map[string]string{}); ok {
 		t.Fatal("expected no match for source not in list")
+	}
+}
+
+func TestPossibleEventsExcludesAutomaticIncludesCommonAndGuarded(t *testing.T) {
+	src := &model.SimpleState{Type: "SimpleState", Id: "s"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{
+			States: []model.State{src},
+			Transitions: []model.Transition{
+				{Source: "s", Event: "auto_only", Trigger: model.AutomaticTrigger, Target: "s"},
+				{Source: "s", Event: "blocked", Guard: &model.Guard{Key: "x", Op: model.GuardExists}, Target: "s"},
+				{Source: "s", Event: "allowed", Target: "s"},
+			},
+			CommonTransitions: []model.CommonTransition{
+				{SourceList: []string{"s"}, Event: "withdraw", Target: "s"},
+			},
+		},
+		CurrentState: persistence.StateContainer{State: src},
+	}
+	got := possibleEventsFor(wf, map[string]string{})
+	want := map[string]bool{"allowed": true, "withdraw": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want exactly %v", got, want)
+	}
+	for _, e := range got {
+		if !want[e] {
+			t.Fatalf("unexpected event %q in %v", e, got)
+		}
 	}
 }
 

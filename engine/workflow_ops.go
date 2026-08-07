@@ -178,31 +178,51 @@ func processEvent(ctx context.Context, id string, event string) (newState string
 	return wf.CurrentState.State.GetId(), nil
 }
 
-func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
-	db := config.Db
-	var wf persistence.WorkflowInstance
-	result := db.First(&wf, "id = ?", id)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-
-	currentState := wf.CurrentState
-	golog.Info("Getting possible events for workflow instance [{}] in state [{}]", id, currentState.State.GetId())
-
-	var possibleEvents []string
-	for _, t := range wf.WorkflowDefinition.Transitions {
-		if t.Source == currentState.State.GetId() {
-			possibleEvents = append(possibleEvents, t.Event)
+// possibleEventsFor lists every event that would actually succeed if sent
+// right now: USER/SYSTEM-triggered (not AUTOMATIC — those fire
+// themselves), guard-passing, from wf's current effective position
+// (substate-local events first, matching findCandidateTransition's own
+// scoping), plus any matching CommonTransitions.
+func possibleEventsFor(wf *persistence.WorkflowInstance, ctxMap map[string]string) []string {
+	cs := wf.CurrentState
+	var events []string
+	collect := func(transitions []model.Transition, sourceId string) {
+		for _, t := range transitions {
+			if t.Source != sourceId || t.Trigger == model.AutomaticTrigger {
+				continue
+			}
+			if !t.Guard.Evaluate(ctxMap) {
+				continue
+			}
+			events = append(events, t.Event)
 		}
 	}
+	if cs.Substate != nil {
+		if comp, ok := cs.State.(*model.CompositeState); ok {
+			collect(comp.SubTransitions, cs.Substate.GetId())
+		}
+	}
+	collect(wf.WorkflowDefinition.Transitions, cs.State.GetId())
 	for _, ct := range wf.WorkflowDefinition.CommonTransitions {
+		if ct.Trigger == model.AutomaticTrigger || !ct.Guard.Evaluate(ctxMap) {
+			continue
+		}
 		for _, s := range ct.SourceList {
-			if s == currentState.State.GetId() {
-				possibleEvents = append(possibleEvents, ct.Event)
+			if s == cs.State.GetId() {
+				events = append(events, ct.Event)
 				break
 			}
 		}
 	}
+	return events
+}
 
-	return possibleEvents, nil
+func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
+	db := config.Db
+	var wf persistence.WorkflowInstance
+	if result := db.First(&wf, "id = ?", id); result.Error != nil {
+		return nil, result.Error
+	}
+	golog.Info("Getting possible events for workflow instance [{}] in state [{}]", id, wf.CurrentState.EffectiveId())
+	return possibleEventsFor(&wf, wf.ContextMap), nil
 }
