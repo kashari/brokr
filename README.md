@@ -169,6 +169,28 @@ The simplest case: `SimpleState`s connected by plain (`External`, `USER`-trigger
 }
 ```
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: POST /workflows (order-lifecycle)
+    brokr-->>User: 201 {id}
+
+    User->>brokr: POST /events?event=pay
+    brokr-->>User: 200 "paid"
+
+    User->>brokr: POST /events?event=ship
+    brokr-->>User: 200 "shipped"
+
+    User->>brokr: POST /events?event=deliver
+    brokr-->>User: 200 "delivered"
+```
+
+Every step is a plain request/response — the User drives each transition explicitly, one event at a time, and each call blocks until the new state is committed.
+
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @order.json | jq -r .id)
 
@@ -227,6 +249,30 @@ Sending `pay` again at this point returns `500 {"error":"no transition found for
 }
 ```
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+    participant Pay as payments.internal
+
+    User->>brokr: POST /workflows (payment-flow)
+    brokr-->>User: 201 {id}
+
+    User->>brokr: POST /events?event=submit_payment
+    brokr->>brokr: enter charging_card:<br/>SetContextMapAction (orderId, amount)
+    brokr->>Pay: HTTP POST /orders/${orderId}/charge<br/>(amount interpolated from context)
+    Pay-->>brokr: 200 {transactionId: "TXN-1"}
+    brokr->>brokr: merge response into context map
+    brokr-->>User: 200 "charging_card"
+
+    User->>brokr: GET /context
+    brokr-->>User: {orderId, amount, transactionId}
+```
+
+The `HttpRequestAction`'s response is awaited synchronously (since `expectResponse: true`) — the transition doesn't complete, and `submit_payment` doesn't return to the User, until `payments.internal` replies and its JSON is merged into the context.
+
 Actions within one list (a state's `entryActions`, here) run **serially in order**, so `HttpRequestAction` sees `orderId`/`amount` written by the `SetContextMapAction` immediately before it. This ordering matters: a transition's own `entryActions` run *after* the target state's `entryActions` have already finished, so don't rely on a transition-level `SetContextMapAction` to seed a value the target state's own entry actions need — put it earlier, in the target state's own list, as above.
 
 ```bash
@@ -270,6 +316,23 @@ A `commonTransition` is shared by every state listed in `sourceList` — avoids 
   ]
 }
 ```
+
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: POST /workflows (account-opening)
+    brokr-->>User: 201 {id}  (starts at personal_details)
+
+    User->>brokr: POST /events?event=withdraw
+    Note right of brokr: "withdraw" is declared once,<br/>in sourceList — valid from EITHER<br/>personal_details or identity_check
+    brokr-->>User: 200 "withdrawn"
+```
+
+Whichever state the User happens to be in when they withdraw, the same single `commonTransition` declaration handles it — there's no need for a separate `withdraw` transition per state.
 
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @account-opening.json | jq -r .id)
@@ -322,6 +385,28 @@ A `guard` gates whether a transition is eligible. Several transitions can share 
 
 Note the ordering: `gte 80` is checked before `gte 30` before `lt 30`. If the transitions were reversed, a score of `85` would incorrectly match `gte 30` (manual review) first, since it too evaluates true and comes earlier.
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: POST /workflows (credit-check)
+    brokr-->>User: 201 {id}
+
+    User->>brokr: POST /events?event=risk_score_received
+    brokr->>brokr: SetContextMapAction riskScore=85
+    brokr-->>User: 200 "risk_scored"
+
+    User->>brokr: POST /events?event=route
+    brokr->>brokr: guard gte:80 → true (first match wins)
+    Note right of brokr: gte:30 and lt:30 guards<br/>are never even evaluated
+    brokr-->>User: 200 "rejected"
+```
+
+Only the first passing guard, in authored order, ever fires — the other two candidate transitions for the same `(source, event)` are simply skipped once one matches.
+
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @credit-check.json | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=risk_score_received"
@@ -354,6 +439,28 @@ In this demo the score is a hardcoded literal for reproducibility; in production
   ]
 }
 ```
+
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: POST /workflows (onboarding-intake)
+    brokr->>brokr: enter application_started
+    brokr->>brokr: AUTOMATIC transition fires immediately<br/>(no client call, no event to send)
+    brokr-->>User: 201 {id}
+    Note right of User: instance is ALREADY at<br/>applicant_type_selection
+
+    User->>brokr: GET /possible-events
+    brokr-->>User: ["select_type"]
+
+    User->>brokr: POST /events?event=select_type
+    brokr-->>User: 200 "ready_for_review"
+```
+
+The User never sends `start` — it isn't even a valid event to send manually in the sense that matters here; the hop happens on its own, synchronously, before `POST /workflows` even returns.
 
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @onboarding-intake.json | jq -r .id)
@@ -391,6 +498,26 @@ No event was sent, yet the instance is already at `applicant_type_selection` —
 }
 ```
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: POST /workflows (retry-demo)
+    brokr-->>User: 201 {id}
+
+    User->>brokr: POST /events?event=reminder_sent (kind=Internal)
+    brokr->>brokr: run entryActions only —<br/>no exit, no entry, no state change
+    brokr-->>User: 200 "waiting_for_confirmation" (unchanged)
+
+    User->>brokr: POST /events?event=confirm
+    brokr-->>User: 200 "confirmed"
+```
+
+`reminder_sent` can be sent any number of times — each call updates the context (`lastReminder`) but the instance never leaves `waiting_for_confirmation`, so nothing about the state itself (its entry/exit actions, any running do-activity) is disturbed.
+
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @retry-demo.json | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=reminder_sent"
@@ -422,6 +549,31 @@ An `AUTOMATIC` transition with a non-empty `after` (a Go duration string) is sch
   ]
 }
 ```
+
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+    participant Timer as per-instance timer
+
+    User->>brokr: POST /workflows (payment-window)
+    brokr->>Timer: arm "timeout" after 15m
+    brokr-->>User: 201 {id}
+
+    alt User pays in time
+        User->>brokr: POST /events?event=pay
+        brokr->>Timer: cancel pending timer
+        brokr-->>User: 200 "paid"
+    else User does nothing
+        Timer--)brokr: 15m elapses — auto-dispatch "timeout"
+        brokr->>brokr: transition to expired
+        Note right of brokr: visible on the SSE stream (§12);<br/>no second client call ever happens
+    end
+```
+
+Only one of the two branches happens per instance — whichever comes first, the real `pay` event or the timer's own deadline, wins and cancels the other.
 
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @payment-window.json | jq -r .id)
@@ -469,6 +621,31 @@ For local testing, use a short duration like `"after": "5s"` and watch the SSE s
   ]
 }
 ```
+
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+    participant Reports as reports.internal
+
+    User->>brokr: POST /workflows (report-generation)
+    brokr->>Reports: (background goroutine) POST /generate
+    brokr-->>User: 201 {id}
+    Note right of brokr: entry into generating_report returns<br/>immediately — the report call doesn't block it
+
+    alt User cancels first
+        User->>brokr: POST /events?event=cancel
+        brokr->>Reports: cancel in-flight request (context cancelled)
+        brokr-->>User: 200 "cancelled"
+    else report finishes first
+        Reports->>brokr: POST /events?event=report_done
+        brokr-->>Reports: 200 "report_ready"
+    end
+```
+
+The do-activity call to `reports.internal` starts the instant `generating_report` is entered and runs concurrently with everything else — the `cancel` path and the "report finishes" path race, and whichever transition actually fires first cancels the do-activity's context if it was still in flight.
 
 ```bash
 ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @report-generation.json | jq -r .id)
@@ -539,6 +716,34 @@ A `Kind: "Fork"` transition atomically spawns one or more child workflow instanc
     }
   ]
 }
+```
+
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant P as brokr (parent instance)
+    participant A as brokr (child A)
+    participant B as brokr (child B)
+
+    User->>P: POST /workflows (joint-application)
+    P-->>User: 201 {id}
+
+    User->>P: POST /events?event=fork_joint_applicants
+    P->>A: create (forkGeneration = gen-1)
+    P->>B: create (forkGeneration = gen-1)
+    P-->>User: 200 "awaiting_both_applicants"
+
+    User->>A: POST /events?event=complete_kyc
+    A-->>User: 200 "kyc_complete"
+    Note over P: still waiting — B not done yet;<br/>generation gen-1 not fully complete
+
+    User->>B: POST /events?event=complete_kyc
+    B-->>User: 200 "kyc_complete"
+    B--)P: (background) attemptAutoJoin:<br/>every gen-1 child now complete
+    P->>P: auto-dispatch "both_applicants_done"
+    Note over P: parent auto-advances to<br/>application_complete — User never called it
 ```
 
 > **Do not mark a `Join` transition's `type` as `"AUTOMATIC"`.** Auto-join fires it by matching `kind: "Join"` alone, irrespective of `type` — but if `type` is also `"AUTOMATIC"`, the engine's *automatic-chaining* logic (used for [§5](#5-automatic-transitions-and-chaining)) has no concept of join-gating and will fire the transition the instant `awaiting_both_applicants` is entered, immediately and unconditionally, before either child has done anything. Leave `type` unset (as above) so it's picked up only by auto-join's children-complete check, never by the plain automatic-chain path.
@@ -617,6 +822,34 @@ Before formal `Fork`/`Join`, children were created via a `CreateChildWorkflowAct
 }
 ```
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant P as brokr (parent instance)
+    participant C as brokr (child)
+
+    User->>P: POST /workflows (single-child-demo)
+    P-->>User: 201 {id}
+
+    User->>P: POST /events?event=spawn_child
+    P->>C: create (CreateChildWorkflowAction, no forkGeneration)
+    P-->>User: 200 "waiting_on_child"
+
+    User->>P: POST /events?event=check_done
+    P-->>User: 500 children not complete
+
+    User->>C: POST /events?event=finish
+    C-->>User: 200 "finished"
+    C--)P: (background) attemptAutoJoin:<br/>every non-withdrawn child now complete
+    P->>P: auto-dispatch "check_done"
+
+    User->>P: POST /events?event=check_done (manual, redundant)
+    P-->>User: 500 "no transition found... in state 'done'"
+    Note right of P: auto-join already won —<br/>the manual call is harmless but too late
+```
+
 Like §9's formal join, a legacy `"join": true` transition is *also* picked up by auto-join — `attemptAutoJoin` fires on `IsJoin()` alone, which is true for either form. The only real difference from §9 is scope: with no `forkGeneration` stamped on this child (ad hoc `CreateChildWorkflowAction` never sets one), the completeness check falls back to *every non-withdrawn child the instance has ever had*, not one fork's cohort.
 
 ```bash
@@ -679,6 +912,36 @@ A `CompositeState` contains one level of `substates` and its own `subTransitions
 }
 ```
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: POST /workflows (review-with-history)
+    brokr-->>User: 201 {id}  (starts at intake)
+
+    User->>brokr: POST /events?event=start_review
+    brokr->>brokr: enter composite "review" at initialSubstate
+    brokr-->>User: 200 "review" (substate: collecting_evidence)
+
+    User->>brokr: POST /events?event=submit_evidence
+    brokr->>brokr: SubTransition — stays inside the composite
+    brokr-->>User: 200 "review" (substate: verifying)
+
+    User->>brokr: POST /events?event=put_on_hold
+    brokr->>brokr: no SubTransition matches — bubbles out,<br/>records history[review] = verifying
+    brokr-->>User: 200 "on_hold"
+
+    User->>brokr: POST /events?event=resume_review (entersHistory)
+    brokr->>brokr: resolve target via history, NOT initialSubstate
+    brokr-->>User: 200 "review" (substate: verifying — resumed)
+
+    User->>brokr: POST /events?event=close
+    brokr-->>User: 200 "closed"
+```
+
 `put_on_hold` and `close` are declared only against the composite's own id (`"review"`), not any individual substate — that's what makes them bubble-out transitions, tried only after `subTransitions` finds no match for the current substate.
 
 ```bash
@@ -713,6 +976,27 @@ Composite states support exactly one level of nesting (a composite of composites
 
 Every completed transition is published on the instance's own SSE topic:
 
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    User->>brokr: GET /events/stream (SSE — connection stays open)
+    activate brokr
+
+    par a separate request drives the instance
+        User->>brokr: POST /events?event=pay
+        brokr-->>User: 200 "paid"
+    and the stream observer sees it live
+        brokr--)User: event: transition<br/>data: {currentState, substate, ...}
+    end
+    deactivate brokr
+```
+
+The SSE connection and the event-dispatch calls are independent — typically two different clients (or two terminals, as in [§11](#11-composite-states-and-the-history-pseudostate)'s walkthrough): one drives the workflow, the other just watches.
+
 ```bash
 curl -N "localhost:8080/workflows/$ID/events/stream"
 ```
@@ -727,14 +1011,37 @@ data: {"workflowInstanceId":"...","event":"pay","lastTransition":"Event: pay, Fr
 
 ### 13. Synchronous vs asynchronous dispatch
 
-By default, `POST .../events` blocks until the transition (including any chained `AUTOMATIC` hops) has fully committed, and returns the resulting state:
+By default, `POST .../events` blocks until the transition (including any chained `AUTOMATIC` hops) has fully committed, and returns the resulting state. Pass `?async=true` to enqueue the event and return immediately instead — useful for a client that's already watching the SSE stream and doesn't want to hold a connection open waiting on a potentially slow chain of entry actions.
+
+**Flow:**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant brokr as brokr API
+
+    rect rgb(240,240,240)
+    Note over User,brokr: Synchronous (default)
+    User->>brokr: POST /events?event=pay
+    activate brokr
+    brokr->>brokr: process transition, commit to DB
+    brokr-->>User: 200 "paid"
+    deactivate brokr
+    end
+
+    rect rgb(240,240,240)
+    Note over User,brokr: Asynchronous (?async=true)
+    User->>brokr: POST /events?event=pay&async=true
+    brokr-->>User: 202 accepted (returns immediately)
+    brokr->>brokr: (background) process transition, commit to DB
+    brokr--)User: SSE: event: transition (result observed later)
+    end
+```
 
 ```bash
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=pay"
 # 200 "paid"
 ```
-
-Pass `?async=true` to enqueue the event and return immediately — useful for a client that's already watching the SSE stream and doesn't want to hold a connection open waiting on a potentially slow chain of entry actions:
 
 ```bash
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=pay&async=true"
