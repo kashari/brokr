@@ -569,7 +569,7 @@ sequenceDiagram
     else User does nothing
         Timer--)brokr: 15m elapses — auto-dispatch "timeout"
         brokr->>brokr: transition to expired
-        Note right of brokr: visible on the SSE stream (§12);<br/>no second client call ever happens
+        Note right of brokr: visible on the SSE stream (§12),<br/>no second client call ever happens
     end
 ```
 
@@ -737,7 +737,7 @@ sequenceDiagram
 
     User->>A: POST /events?event=complete_kyc
     A-->>User: 200 "kyc_complete"
-    Note over P: still waiting — B not done yet;<br/>generation gen-1 not fully complete
+    Note over P: still waiting — B not done yet,<br/>generation gen-1 not fully complete
 
     User->>B: POST /events?event=complete_kyc
     B-->>User: 200 "kyc_complete"
