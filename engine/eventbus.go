@@ -38,6 +38,7 @@ func publishTransition(id, event string, wf persistence.WorkflowInstance) {
 		Event:              event,
 		LastTransition:     wf.LastTransition,
 		CurrentState:       wf.CurrentState.State,
+		Substate:           wf.CurrentState.Substate,
 	})
 	if err != nil {
 		golog.Error("failed to marshal transition event for instance [{}]: {}", id, err.Error())

@@ -72,6 +72,19 @@ func GetPossibleEvents(ctx *draupnir.Context) {
 	ctx.JSON(http.StatusOK, events)
 }
 
+// GetContext returns the current ${var} interpolation context for
+// workflow instance :id — primarily a debugging/inspection aid now that
+// ContextMap survives across transitions (see Task 2).
+func GetContext(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	wf, err := engine.GetWorkflowInstanceRaw(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, wf.ContextMap)
+}
+
 // CreateChildBlueprint creates a new workflow instance as a child of :id.
 func CreateChildBlueprint(ctx *draupnir.Context) {
 	parentId := ctx.Param("id")

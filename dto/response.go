@@ -9,6 +9,7 @@ type WorkflowTransitionEvent struct {
 	Event              string      `json:"event"`
 	LastTransition     string      `json:"lastTransition"`
 	CurrentState       model.State `json:"currentState"`
+	Substate           model.State `json:"substate,omitempty"`
 }
 
 // ChildInstance describes one child workflow instance in a parent's children

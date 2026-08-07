@@ -30,6 +30,7 @@ func main() {
 	router.GET("/workflows/:id", web.GetBlueprint)
 	router.POST("/workflows/:id/events", web.SendEventToInstance)
 	router.GET("/workflows/:id/possible-events", web.GetPossibleEvents)
+	router.GET("/workflows/:id/context", web.GetContext)
 	router.SSE("/workflows/:id/events/stream", web.StreamWorkflowInstanceEvents)
 	router.POST("/workflows/:id/children", web.CreateChildBlueprint)
 	router.GET("/workflows/:id/children", web.GetChildren)

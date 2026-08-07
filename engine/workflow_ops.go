@@ -74,6 +74,16 @@ func GetWorkflowInstance(id string) (model.Workflow, error) {
 	return wf.WorkflowDefinition, nil
 }
 
+// GetWorkflowInstanceRaw returns the full persisted row for id, including
+// ContextMap and CurrentState — unlike GetWorkflowInstance, which only
+// returns the workflow definition.
+func GetWorkflowInstanceRaw(id string) (persistence.WorkflowInstance, error) {
+	db := config.Db
+	var wf persistence.WorkflowInstance
+	result := db.First(&wf, "id = ?", id)
+	return wf, result.Error
+}
+
 // SendEventToWorkflowInstance processes an event for a specific workflow instance.
 //
 // It retrieves the workflow instance from the database, identifies the current state, and checks for a valid transition
