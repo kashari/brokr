@@ -484,6 +484,53 @@ function DefinitionTab({ graph }) {
   `;
 }
 
+function HistoryTab({ journey }) {
+  const rows = (journey || []).slice().reverse();
+  return html`
+    <div className="w-full max-w-5xl h-full overflow-y-auto pr-sm">
+      <h2 className="font-headline-md text-headline-md text-on-surface mb-md sticky top-0 bg-background/80 backdrop-blur-sm py-sm">Journey History</h2>
+      <div className="space-y-sm">
+        ${rows.length === 0 && html`<div className="text-on-surface-variant font-code-sm text-code-sm">No transitions recorded yet.</div>`}
+        ${rows.map((e, i) => html`
+          <div key=${i} className="glass-panel rounded-lg p-md border border-outline-variant/20 flex items-center justify-between gap-md flex-wrap">
+            <div className="flex items-center gap-md">
+              <span className="font-code-xs text-code-xs text-on-surface-variant w-40 flex-shrink-0">${new Date(e.timestamp).toLocaleString()}</span>
+              <span className="font-code-sm text-code-sm text-on-surface">${e.fromState || '—'}${e.fromSubstate ? '/' + e.fromSubstate : ''} → ${e.toState}${e.toSubstate ? '/' + e.toSubstate : ''}</span>
+            </div>
+            <div className="flex items-center gap-sm">
+              ${e.event && html`<span className="font-code-xs text-code-xs bg-primary/10 text-primary px-2 py-1 rounded-full">${e.event}</span>`}
+              ${e.trigger && html`<span className="font-code-xs text-code-xs text-on-surface-variant">${e.trigger}</span>`}
+              ${e.kind && html`<span className="font-code-xs text-code-xs text-secondary">${e.kind}</span>`}
+            </div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function MetricsTab({ data }) {
+  const journey = data.journey || [];
+  const stats = [
+    { label: 'Total Transitions', value: journey.filter((e) => e.event).length },
+    { label: 'Current State', value: data.instance.currentSubstate || data.instance.currentState },
+    { label: 'Status', value: data.instance.complete ? 'Complete' : 'In Progress' },
+    { label: 'Possible Events', value: (data.possibleEvents || []).length },
+    { label: 'Children', value: (data.children || []).length },
+    { label: 'Last Transition', value: journey.length ? new Date(journey[journey.length - 1].timestamp).toLocaleString() : '—' },
+  ];
+  return html`
+    <div className="w-full max-w-5xl grid grid-cols-2 md:grid-cols-3 gap-md">
+      ${stats.map((s, i) => html`
+        <div key=${i} className="glass-panel rounded-lg p-lg border border-outline-variant/20 flex flex-col gap-xs">
+          <span className="font-label-caps text-label-caps text-on-surface-variant uppercase">${s.label}</span>
+          <span className="font-headline-md text-headline-md text-on-surface font-bold truncate">${String(s.value)}</span>
+        </div>
+      `)}
+    </div>
+  `;
+}
+
 function App() {
   const id = React.useMemo(() => {
     const m = window.location.pathname.match(/\/workflows\/([^/]+)\/visualizer/);
@@ -500,8 +547,8 @@ function App() {
       ${tab === 'visualizer' && html`<${VisualizerTab} data=${data} />`}
       ${tab === 'live' && html`<${LiveTab} data=${data} liveEvents=${liveEvents} connected=${connected} />`}
       ${tab === 'definition' && html`<${DefinitionTab} graph=${data.graph} />`}
-      ${tab === 'history' && html`<div className="text-on-surface-variant">History tab lands in Task 9.</div>`}
-      ${tab === 'metrics' && html`<div className="text-on-surface-variant">Metrics tab lands in Task 9.</div>`}
+      ${tab === 'history' && html`<${HistoryTab} journey=${data.journey} />`}
+      ${tab === 'metrics' && html`<${MetricsTab} data=${data} />`}
     <//>
   `;
 }
