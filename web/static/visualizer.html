@@ -289,7 +289,15 @@ function VisualizerTab({ data }) {
       </button>
       <div className="w-px h-6 bg-outline-variant/50 mx-sm"></div>
       <button className="bg-secondary text-on-secondary rounded-full p-xs flex items-center justify-center w-10 h-10 disabled:opacity-30"
-        disabled=${isLive && !playing} onClick=${() => setPlaying((p) => !p)}>
+        disabled=${journey.length < 2} onClick=${() => {
+          // Pause always wins, so the brief playing && isLive render at the end
+          // of a replay still pauses rather than restarting.
+          if (playing) { setPlaying(false); return; }
+          // Pressing play from the live (default) position replays the whole
+          // journey from the start; mid-scrub it resumes from where you are.
+          if (isLive) setViewIndex(0);
+          setPlaying(true);
+        }}>
         <span className="material-symbols-outlined" style=${{fontVariationSettings: "'FILL' 1"}}>${playing ? 'pause' : 'play_arrow'}</span>
       </button>
       <div className="w-px h-6 bg-outline-variant/50 mx-sm"></div>
@@ -392,57 +400,87 @@ function LiveTab({ data, liveEvents, connected }) {
     return () => clearTimeout(t);
   }, [liveEvents]);
 
-  if (data.instance.complete) {
-    return html`
-      <div className="glass-panel rounded-xl p-xl w-96 flex flex-col items-center gap-sm border border-outline-variant/30">
-        <span className="material-symbols-outlined text-tertiary" style=${{fontSize: '40px'}}>flag</span>
-        <h3 className="font-headline-md text-headline-md text-on-surface text-center">Final State Reached</h3>
-        <p className="text-on-surface-variant font-code-sm text-code-sm text-center">
-          This instance is complete (in ${data.instance.currentState}). It will never emit another transition, so there is nothing left to stream live.
-        </p>
-      </div>
-    `;
-  }
-
   const node = displayState ? nodeById(data.graph, displayState.id) : null;
   const title = node ? (node.bulletName || node.id) : (displayState ? displayState.id : data.instance.currentState);
+  // Completion only changes the status row above the card. The card and the
+  // feed keep rendering either way: the event that completes the instance is
+  // the single most important one to see, and hiding the tab the moment
+  // `complete` flips would both erase the accumulated feed and cut off the
+  // slide animation that same event just started.
+  const complete = data.instance.complete;
 
   return html`
     <div className="w-full max-w-3xl flex flex-col items-center gap-lg">
-      <div className="flex items-center gap-sm font-code-xs text-code-xs uppercase tracking-widest">
-        <span className=${`w-2 h-2 rounded-full ${connected ? 'bg-secondary pulse-dot' : 'bg-error'}`}></span>
-        <span className=${connected ? 'text-secondary' : 'text-error'}>${connected ? 'Live — connected' : 'Disconnected — retrying…'}</span>
-      </div>
+      ${complete
+        ? html`
+          <div className="flex items-center gap-sm font-code-xs text-code-xs uppercase tracking-widest text-tertiary">
+            <span className="material-symbols-outlined text-[16px]">flag</span>
+            <span>Final State Reached — ${data.instance.currentState}</span>
+          </div>
+        `
+        : html`
+          <div className="flex items-center gap-sm font-code-xs text-code-xs uppercase tracking-widest">
+            <span className=${`w-2 h-2 rounded-full ${connected ? 'bg-secondary pulse-dot' : 'bg-error'}`}></span>
+            <span className=${connected ? 'text-secondary' : 'text-error'}>${connected ? 'Live — connected' : 'Disconnected — retrying…'}</span>
+          </div>
+        `}
       <div className=${`glass-panel node-active rounded-xl p-lg w-96 flex flex-col shadow-2xl ${anim}`}>
         <div className="flex items-center justify-between border-b border-outline-variant/30 pb-sm mb-md">
-          <span className="font-label-caps text-label-caps uppercase tracking-widest text-primary">Live State</span>
+          <span className=${`font-label-caps text-label-caps uppercase tracking-widest ${complete ? 'text-tertiary' : 'text-primary'}`}>
+            ${complete ? 'Final State' : 'Live State'}
+          </span>
         </div>
         <h3 className="font-headline-md text-headline-md font-bold text-on-surface text-center font-code-sm">${title}</h3>
       </div>
       <div className="w-full max-h-64 overflow-y-auto space-y-sm">
         ${liveEvents.length === 0
-          ? html`<div className="text-on-surface-variant font-code-sm text-code-sm text-center">Waiting for the next event on this instance…</div>`
+          ? html`<div className="text-on-surface-variant font-code-sm text-code-sm text-center">
+              ${complete
+                ? 'This instance was already complete when this page loaded — no events streamed here.'
+                : 'Waiting for the next event on this instance…'}
+            </div>`
           : liveEvents.slice().reverse().map((entry, i) => html`<${LiveEventRow} key=${i} entry=${entry} />`)}
       </div>
     </div>
   `;
 }
 
-function DefinitionNodeCard({ node, graph }) {
+// DefinitionNodeCard renders one state. A composite (node.substates
+// non-empty) additionally renders each of its substates nested inside its own
+// card, via the same component with nested=true — substate nodes carry
+// parentId, so DefinitionTab's top-level filter never passes them in on their
+// own, and without this their actions and sub-transitions would be invisible.
+// nested=true both restyles the card and stops the recursion (BuildGraph only
+// flattens one level of substates, so a nested card never has children of its
+// own to look up).
+function DefinitionNodeCard({ node, graph, nested }) {
   const outgoing = graph.edges.filter((e) => e.source === node.id);
+  const hasSubstates = !!(node.substates && node.substates.length > 0);
+  // e.source is the raw (sub-)transition source id whatever its scope, so this
+  // same lookup resolves a substate's own outgoing "sub:<compositeId>" edges.
+  const substateNodes = hasSubstates && !nested
+    ? node.substates.map((subId) => graph.nodes.find((n) => n.id === subId)).filter(Boolean)
+    : [];
   return html`
-    <div className="glass-panel rounded-lg p-md border border-outline-variant/20">
+    <div className=${nested
+        ? 'rounded-lg p-md border border-primary/20 bg-surface-container/40'
+        : 'glass-panel rounded-lg p-md border border-outline-variant/20'}>
       <div className="flex items-center justify-between mb-sm">
         <div className="flex items-center gap-sm">
           ${node.isInitial && html`<span className="font-code-xs text-code-xs bg-secondary/10 text-secondary px-2 py-1 rounded">Initial</span>`}
           ${node.isEnd && html`<span className="font-code-xs text-code-xs bg-tertiary/10 text-tertiary px-2 py-1 rounded">End</span>`}
+          ${nested && html`<span className="font-code-xs text-code-xs bg-primary/10 text-primary px-2 py-1 rounded">Substate</span>`}
           <span className="font-code-sm text-code-sm text-on-surface font-bold">${node.bulletName || node.id}</span>
           <span className="font-code-xs text-code-xs text-on-surface-variant">(${node.id})</span>
         </div>
         <span className="font-code-xs text-code-xs text-on-surface-variant">${node.type}</span>
       </div>
-      ${node.substates && node.substates.length > 0 && html`
-        <div className="font-code-xs text-code-xs text-on-surface-variant mb-sm">Substates: ${node.substates.join(', ')}</div>
+      ${hasSubstates && html`
+        <div className="font-code-xs text-code-xs text-on-surface-variant mb-sm flex flex-wrap gap-sm">
+          <span>Substates: ${node.substates.join(', ')}</span>
+          ${node.initialSubstate && html`<span className="text-secondary">initial: ${node.initialSubstate}</span>`}
+          ${node.history && html`<span className="text-tertiary">history: ${node.history}</span>`}
+        </div>
       `}
       <${ActionGroup} title="Entry Actions" actions=${node.entryActions} tone="primary" />
       <${ActionGroup} title="Exit Actions" actions=${node.exitActions} tone="secondary" />
@@ -458,6 +496,16 @@ function DefinitionNodeCard({ node, graph }) {
               ${e.guard && html`<span className="text-secondary">if ${e.guard.key} ${e.guard.op} ${e.guard.value}</span>`}
             </div>
           `)}
+        </div>
+      `}
+      ${substateNodes.length > 0 && html`
+        <div className="mt-md pt-md border-t border-outline-variant/20">
+          <span className="font-label-caps text-label-caps text-on-surface-variant">Inside ${node.bulletName || node.id}</span>
+          <div className="mt-sm ml-md pl-md border-l-2 border-primary/30 space-y-sm">
+            ${substateNodes.map((sub) => html`
+              <${DefinitionNodeCard} key=${sub.id} node=${sub} graph=${graph} nested=${true} />
+            `)}
+          </div>
         </div>
       `}
     </div>
