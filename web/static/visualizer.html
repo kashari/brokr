@@ -1,5 +1,376 @@
 <!doctype html>
-<html>
-<head><meta charset="utf-8"><title>Brokr State Machine Visualizer</title></head>
-<body>Loading visualizer for this instance…</body>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Brokr State Machine Visualizer</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script id="tailwind-config">
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "on-secondary": "#003824", "error-container": "#93000a", "secondary-container": "#00a572",
+        "inverse-surface": "#dae2fd", "on-primary-container": "#005f6d", "on-secondary-container": "#00311f",
+        "primary-container": "#00e0ff", "secondary-fixed": "#6ffbbe", "surface-tint": "#00daf8",
+        "on-surface": "#dae2fd", "on-error": "#690005", "on-primary-fixed-variant": "#004e5a",
+        primary: "#baf2ff", "inverse-on-surface": "#283044", surface: "#0b1326", "on-primary": "#00363f",
+        "tertiary-fixed-dim": "#ffb2b7", "on-tertiary-fixed-variant": "#92002a", "on-error-container": "#ffdad6",
+        "surface-container": "#171f33", "surface-container-high": "#222a3d", "primary-fixed": "#a5eeff",
+        secondary: "#4edea3", "on-surface-variant": "#bac9cd", error: "#ffb4ab",
+        "surface-container-highest": "#2d3449", background: "#0b1326", "outline-variant": "#3b494c",
+        "surface-variant": "#2d3449", "surface-dim": "#0b1326", "secondary-fixed-dim": "#4edea3",
+        "surface-bright": "#31394d", tertiary: "#ffe2e2", "tertiary-fixed": "#ffdadb",
+        "primary-fixed-dim": "#00daf8", "inverse-primary": "#006877", "on-background": "#dae2fd",
+        "surface-container-low": "#131b2e", "on-secondary-fixed": "#002113", "on-tertiary-fixed": "#40000d",
+        "tertiary-container": "#ffbbbe", "on-tertiary-container": "#af0034", "surface-container-lowest": "#060e20",
+        "on-secondary-fixed-variant": "#005236", "on-tertiary": "#67001b", "on-primary-fixed": "#001f25",
+        outline: "#859397",
+      },
+      borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px" },
+      spacing: { xs: "8px", md: "16px", "canvas-margin": "40px", lg: "24px", sm: "12px", xl: "32px", base: "4px" },
+      fontFamily: {
+        "code-sm": ["JetBrains Mono"], "body-md": ["Inter"], "label-caps": ["JetBrains Mono"],
+        "code-xs": ["JetBrains Mono"], "headline-lg": ["Inter"], "headline-md": ["Inter"],
+      },
+      fontSize: {
+        "code-sm": ["14px", { lineHeight: "20px", fontWeight: "400" }],
+        "body-md": ["16px", { lineHeight: "24px", fontWeight: "400" }],
+        "label-caps": ["11px", { lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "700" }],
+        "code-xs": ["12px", { lineHeight: "16px", fontWeight: "500" }],
+        "headline-lg": ["32px", { lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "700" }],
+        "headline-md": ["24px", { lineHeight: "32px", letterSpacing: "-0.01em", fontWeight: "600" }],
+      },
+    },
+  },
+};
+</script>
+<style>
+  html, body { background: #0b1326; }
+  .glass-panel { background: rgba(19, 27, 46, 0.7); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(133, 147, 151, 0.2); }
+  .node-active { box-shadow: 0 0 24px rgba(186, 242, 255, 0.15), inset 0 0 12px rgba(186, 242, 255, 0.1); border-color: rgba(186, 242, 255, 0.5); }
+  .slide-out-left { animation: slideOutLeft 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+  .slide-in-right { animation: slideInRight 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+  @keyframes slideOutLeft { to { transform: translateX(-40px); opacity: 0; } }
+  @keyframes slideInRight { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  .pulse-dot { animation: pulseDot 1.6s ease-in-out infinite; }
+  @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+</style>
+</head>
+<body class="bg-background text-on-surface h-screen w-screen overflow-hidden font-body-md text-body-md relative">
+<div id="root" class="contents"></div>
+<script type="module">
+import htm from 'https://esm.sh/htm@3.1.1';
+
+const h = React.createElement;
+const html = htm.bind(h);
+
+function nodeById(graph, id) {
+  return graph.nodes.find((n) => n.id === id) || null;
+}
+function edgesFrom(graph, sourceId) {
+  return graph.edges.filter((e) => e.source === sourceId);
+}
+
+function useVisualizationData(id) {
+  const [data, setData] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  // liveEvents holds the raw transition payloads received over this page
+  // load's SSE connection, filtered to this instance — the Live tab
+  // animates directly off these instead of waiting on a refetch.
+  const [liveEvents, setLiveEvents] = React.useState([]);
+  const [connected, setConnected] = React.useState(false);
+
+  const refresh = React.useCallback(() => {
+    fetch(`/workflows/${id}/visualization-data`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setData)
+      .catch((err) => setError(err.message));
+  }, [id]);
+
+  React.useEffect(() => {
+    refresh();
+    const es = new EventSource(`/workflows/${id}/events/stream`);
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
+    es.addEventListener('transition', (ev) => {
+      let payload;
+      try {
+        payload = JSON.parse(ev.data);
+      } catch (e) {
+        return; // malformed SSE frame — nothing to act on
+      }
+      // The stream is already scoped server-side to this instance's own
+      // topic (see engine.EventBus.Subscribe(id)); this check is the
+      // client-side equivalent, defensive against ever sharing one
+      // EventSource across instances in a future refactor.
+      if (payload.workflowInstanceId !== id) return;
+      setLiveEvents((prev) => [...prev, { ...payload, receivedAt: new Date().toISOString() }]);
+      refresh();
+    });
+    return () => { es.close(); setConnected(false); };
+  }, [id, refresh]);
+
+  return { data, error, liveEvents, connected };
+}
+
+function ShaderBackground() {
+  const canvasRef = React.useRef(null);
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    function syncSize() {
+      const w = canvas.clientWidth || 1280;
+      const h2 = canvas.clientHeight || 720;
+      if (canvas.width !== w || canvas.height !== h2) { canvas.width = w; canvas.height = h2; }
+    }
+    const ro = new ResizeObserver(syncSize);
+    ro.observe(canvas);
+    syncSize();
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return () => ro.disconnect();
+    const vs = `attribute vec2 a_position; varying vec2 v_texCoord; void main() { v_texCoord = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }`;
+    const fs = `precision highp float; varying vec2 v_texCoord; uniform float u_time; uniform vec2 u_resolution;
+      void main() {
+        vec2 uv = v_texCoord;
+        float grid = 0.0;
+        grid += smoothstep(0.48, 0.5, abs(fract(uv.x * 20.0 - 0.5) - 0.5));
+        grid += smoothstep(0.48, 0.5, abs(fract(uv.y * 20.0 - 0.5) - 0.5));
+        float pulse = sin(u_time * 0.5) * 0.5 + 0.5;
+        vec3 baseColor = vec3(0.043, 0.075, 0.149);
+        vec3 accentColor = vec3(0.0, 0.878, 1.0);
+        float nodes = 0.0;
+        for (int i = 0; i < 5; i++) {
+          vec2 pos = vec2(sin(u_time * 0.2 + float(i) * 1.5) * 0.4 + 0.5, cos(u_time * 0.3 + float(i) * 2.1) * 0.4 + 0.5);
+          float dist = length(uv - pos);
+          nodes += 0.002 / (dist * dist);
+        }
+        vec3 finalColor = baseColor;
+        finalColor += grid * accentColor * 0.05;
+        finalColor += nodes * accentColor * 0.3 * pulse;
+        gl_FragColor = vec4(finalColor, 1.0);
+      }`;
+    function compile(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const posLoc = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+    const uTime = gl.getUniformLocation(prog, 'u_time');
+    const uRes = gl.getUniformLocation(prog, 'u_resolution');
+    let raf = 0;
+    function render(t) {
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      if (uTime) gl.uniform1f(uTime, t * 0.001);
+      if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      raf = requestAnimationFrame(render);
+    }
+    raf = requestAnimationFrame(render);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, []);
+  return html`<canvas ref=${canvasRef} className="w-full h-full block"></canvas>`;
+}
+
+function ActionGroup({ title, actions, tone }) {
+  if (!actions || actions.length === 0) return null;
+  const toneCls = tone === 'secondary'
+    ? 'bg-secondary/10 text-secondary border-secondary/30'
+    : 'bg-primary/10 text-primary border-primary/30';
+  return html`
+    <div className="space-y-sm bg-surface-container/50 rounded-lg p-md border border-outline-variant/20 mt-md">
+      <span className="font-label-caps text-label-caps text-on-surface-variant">${title}</span>
+      <div className="flex flex-wrap gap-sm mt-sm">
+        ${actions.map((a, i) => html`
+          <span key=${i} className=${`font-code-xs text-code-xs ${toneCls} border px-sm py-xs rounded-full flex items-center gap-xs`}>
+            <span className="material-symbols-outlined text-[14px]">bolt</span> ${a.label}
+          </span>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function StateCard({ label, node, stateId, variant }) {
+  const title = node ? (node.bulletName || node.id) : (stateId || '—');
+  if (variant !== 'active') {
+    return html`
+      <div className="glass-panel rounded-lg p-md w-64 opacity-70 flex-shrink-0 flex flex-col items-center border border-outline-variant/30">
+        <div className="text-on-surface-variant font-label-caps text-label-caps mb-sm uppercase tracking-wider">${label}</div>
+        <div className="font-code-sm text-code-sm text-on-surface py-sm px-md bg-surface-container rounded w-full text-center truncate">${title}</div>
+      </div>
+    `;
+  }
+  return html`
+    <div className="glass-panel node-active rounded-xl p-lg w-96 flex-shrink-0 flex flex-col shadow-2xl relative z-10">
+      <div className="flex items-center justify-between border-b border-outline-variant/30 pb-sm mb-md">
+        <div className="flex items-center gap-sm text-primary">
+          <span className="material-symbols-outlined" style=${{fontVariationSettings: "'FILL' 1"}}>adjust</span>
+          <span className="font-label-caps text-label-caps uppercase tracking-widest">${label}</span>
+        </div>
+        <span className="font-code-xs text-code-xs text-secondary bg-secondary/10 px-2 py-1 rounded">${node && node.isEnd ? 'End' : 'Active'}</span>
+      </div>
+      <h3 className="font-headline-md text-headline-md font-bold text-on-surface text-center mb-lg font-code-sm">${title}</h3>
+      <${ActionGroup} title="Entry Actions" actions=${node ? node.entryActions : null} tone="primary" />
+      <${ActionGroup} title="Do Actions" actions=${node ? node.doActions : null} tone="secondary" />
+    </div>
+  `;
+}
+
+function VisualizerTab({ data }) {
+  const journey = data.journey || [];
+  const [viewIndex, setViewIndex] = React.useState(journey.length - 1);
+  const [playing, setPlaying] = React.useState(false);
+
+  React.useEffect(() => { setViewIndex(journey.length - 1); }, [journey.length]);
+
+  React.useEffect(() => {
+    if (!playing) return;
+    if (viewIndex >= journey.length - 1) { setPlaying(false); return; }
+    const t = setTimeout(() => setViewIndex((i) => Math.min(i + 1, journey.length - 1)), 900);
+    return () => clearTimeout(t);
+  }, [playing, viewIndex, journey.length]);
+
+  if (journey.length === 0) {
+    return html`<div className="text-on-surface-variant font-code-sm text-code-sm">No journey recorded yet.</div>`;
+  }
+
+  const entry = journey[viewIndex];
+  const currentId = entry.toSubstate || entry.toState;
+  const cameFromId = entry.fromSubstate || entry.fromState || null;
+  const currentNode = nodeById(data.graph, currentId);
+  const outgoing = edgesFrom(data.graph, currentId).filter((e) => e.trigger !== 'AUTOMATIC');
+  const nextEdge = outgoing[0] || null;
+  const isLive = viewIndex === journey.length - 1;
+
+  return html`
+    <div className="w-full max-w-5xl relative flex items-center justify-center gap-xl h-[500px]">
+      ${!isLive && html`
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mb-sm bg-tertiary/10 border border-tertiary/40 text-tertiary text-code-xs font-code-xs px-md py-xs rounded-full flex items-center gap-sm">
+          Viewing step ${viewIndex + 1} of ${journey.length}
+          <button className="underline" onClick=${() => setViewIndex(journey.length - 1)}>Jump to live</button>
+        </div>
+      `}
+      <${StateCard} label="Came From" stateId=${cameFromId} node=${cameFromId ? nodeById(data.graph, cameFromId) : null} variant="ghost" />
+      <${StateCard} label=${isLive ? 'Current State' : 'State At This Step'} stateId=${currentId} node=${currentNode} variant="active" />
+      ${nextEdge ? html`
+        <div className="glass-panel rounded-lg p-md w-64 opacity-70 flex-shrink-0 flex flex-col items-center border border-outline-variant/30">
+          <div className="text-on-surface-variant font-label-caps text-label-caps mb-sm uppercase tracking-wider">Goes To</div>
+          <div className="font-code-sm text-code-sm text-primary py-sm px-md bg-primary/5 border border-primary/20 rounded w-full text-center truncate">${nextEdge.target}</div>
+          <div className="mt-sm font-code-xs text-code-xs text-on-surface-variant flex items-center gap-xs">
+            <span className="material-symbols-outlined text-[14px]">event</span> Event: ${nextEdge.event || '(automatic)'}
+          </div>
+        </div>
+      ` : html`
+        <div className="glass-panel rounded-lg p-md w-64 opacity-50 flex-shrink-0 flex flex-col items-center border border-outline-variant/30">
+          <div className="text-on-surface-variant font-label-caps text-label-caps mb-sm uppercase tracking-wider">Goes To</div>
+          <div className="font-code-sm text-code-sm text-on-surface-variant py-sm px-md rounded w-full text-center">— end of path —</div>
+        </div>
+      `}
+    </div>
+    <div className="absolute bottom-md left-1/2 -translate-x-1/2 flex items-center gap-md z-50 bg-surface-container-highest/60 backdrop-blur-lg border border-outline-variant/50 rounded-full px-md py-xs">
+      <button className="text-on-surface-variant p-xs hover:text-primary flex items-center gap-xs font-label-caps text-label-caps uppercase disabled:opacity-30"
+        disabled=${viewIndex <= 0} onClick=${() => setViewIndex((i) => Math.max(i - 1, 0))}>
+        <span className="material-symbols-outlined">arrow_back</span> Step Back
+      </button>
+      <div className="w-px h-6 bg-outline-variant/50 mx-sm"></div>
+      <button className="bg-secondary text-on-secondary rounded-full p-xs flex items-center justify-center w-10 h-10 disabled:opacity-30"
+        disabled=${isLive && !playing} onClick=${() => setPlaying((p) => !p)}>
+        <span className="material-symbols-outlined" style=${{fontVariationSettings: "'FILL' 1"}}>${playing ? 'pause' : 'play_arrow'}</span>
+      </button>
+      <div className="w-px h-6 bg-outline-variant/50 mx-sm"></div>
+      <button className="text-on-surface-variant p-xs hover:text-primary flex items-center gap-xs font-label-caps text-label-caps uppercase disabled:opacity-30"
+        disabled=${isLive} onClick=${() => setViewIndex((i) => Math.min(i + 1, journey.length - 1))}>
+        Step Forward <span className="material-symbols-outlined">arrow_forward</span>
+      </button>
+    </div>
+  `;
+}
+
+function Shell({ tab, onTab, instanceId, data, children }) {
+  const tabs = [
+    { id: 'visualizer', label: 'Visualizer', icon: 'account_tree' },
+    { id: 'live', label: 'Live', icon: 'sensors' },
+    { id: 'definition', label: 'Definition', icon: 'description' },
+    { id: 'history', label: 'History', icon: 'history' },
+    { id: 'metrics', label: 'Metrics', icon: 'analytics' },
+  ];
+  return html`
+    <div className="h-full w-full flex flex-col relative">
+      <div className="absolute inset-0 z-0"><${ShaderBackground} /></div>
+      <header className="bg-surface/80 backdrop-blur-xl border-b border-outline-variant/30 flex justify-between items-center w-full px-canvas-margin h-16 sticky top-0 z-50">
+        <div className="flex items-center gap-lg">
+          <span className="font-code-sm text-code-sm tracking-widest uppercase text-primary">Brokr Engine</span>
+          <span className="text-on-surface-variant font-code-xs text-code-xs">${data.instance.workflowId} v${data.instance.workflowVersion}</span>
+        </div>
+        <span className="font-code-xs text-code-xs text-on-surface-variant">${instanceId}</span>
+      </header>
+      <div className="flex flex-1 overflow-hidden relative z-10">
+        <aside className="bg-surface-container-low/90 backdrop-blur-md border-r border-outline-variant/20 h-full w-80 flex-shrink-0 flex flex-col py-lg z-20">
+          <div className="px-md mb-lg">
+            <h2 className="font-headline-md text-headline-md font-bold text-primary">Brokr Visualizer</h2>
+            <p className="text-on-surface-variant font-code-xs text-code-xs mt-xs">${data.instance.complete ? 'Complete' : 'Running'}</p>
+          </div>
+          <nav className="flex-1 flex flex-col gap-xs">
+            ${tabs.map((t) => html`
+              <a key=${t.id} href="#" className=${t.id === tab
+                  ? 'bg-primary-container/20 text-primary border-r-2 border-primary flex items-center gap-md px-md py-sm'
+                  : 'text-on-surface-variant opacity-70 hover:bg-surface-container-high hover:text-on-surface flex items-center gap-md px-md py-sm'}
+                onClick=${(e) => { e.preventDefault(); onTab(t.id); }}>
+                <span className="material-symbols-outlined">${t.icon}</span>
+                <span className="font-body-md text-body-md">${t.label}</span>
+              </a>
+            `)}
+          </nav>
+          <div className="px-md mt-auto font-code-xs text-code-xs text-on-surface-variant">
+            Instance <span className="text-on-surface">${instanceId.slice(0, 8)}</span>
+          </div>
+        </aside>
+        <main className="flex-1 relative flex flex-col items-center justify-center p-canvas-margin overflow-hidden">
+          ${children}
+        </main>
+      </div>
+    </div>
+  `;
+}
+
+function App() {
+  const id = React.useMemo(() => {
+    const m = window.location.pathname.match(/\/workflows\/([^/]+)\/visualizer/);
+    return m ? m[1] : '';
+  }, []);
+  const { data, error, liveEvents, connected } = useVisualizationData(id);
+  const [tab, setTab] = React.useState('visualizer');
+
+  if (error) return html`<div className="p-xl text-error">Failed to load instance ${id}: ${error}</div>`;
+  if (!data) return html`<div className="p-xl text-on-surface-variant">Loading instance ${id}…</div>`;
+
+  return html`
+    <${Shell} tab=${tab} onTab=${setTab} instanceId=${id} data=${data}>
+      ${tab === 'visualizer' && html`<${VisualizerTab} data=${data} />`}
+      ${tab === 'live' && html`<div className="text-on-surface-variant">Live tab lands in Task 7.</div>`}
+      ${tab === 'definition' && html`<div className="text-on-surface-variant">Definition tab lands in Task 8.</div>`}
+      ${tab === 'history' && html`<div className="text-on-surface-variant">History tab lands in Task 9.</div>`}
+      ${tab === 'metrics' && html`<div className="text-on-surface-variant">Metrics tab lands in Task 9.</div>`}
+    <//>
+  `;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+</script>
+</body>
 </html>
