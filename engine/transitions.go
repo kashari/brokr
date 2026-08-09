@@ -224,6 +224,14 @@ func armStateActivities(id string, wf *persistence.WorkflowInstance, ctxMap map[
 // the gap is documented rather than silent.
 func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowInstance, t model.Transition, ctxMap map[string]string) (map[string]string, bool, error) {
 	fromId := wf.CurrentState.EffectiveId()
+	// fromTopId is the TOP-LEVEL state being left — the composite's own id
+	// when the instance is inside one, where fromId/EffectiveId() would give
+	// the substate instead. dto.JourneyEntry follows the same convention as
+	// dto.GraphNode: *State fields always name a top-level state, *Substate
+	// fields always name a substate, so a journey entry recorded from inside
+	// a composite must not duplicate the substate id into FromState.
+	// fromId keeps its pre-existing meaning for wf.LastTransition below.
+	fromTopId := wf.CurrentState.State.GetId()
 	fromSubId := ""
 	if wf.CurrentState.Substate != nil {
 		fromSubId = wf.CurrentState.Substate.GetId()
@@ -237,9 +245,9 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 				Event:        t.Event,
 				Trigger:      t.Trigger,
 				Kind:         t.Kind,
-				FromState:    fromId,
+				FromState:    fromTopId,
 				FromSubstate: fromSubId,
-				ToState:      fromId,
+				ToState:      fromTopId,
 				ToSubstate:   fromSubId,
 			})
 		}
@@ -343,7 +351,7 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		Event:        t.Event,
 		Trigger:      t.Trigger,
 		Kind:         t.Kind,
-		FromState:    fromId,
+		FromState:    fromTopId,
 		FromSubstate: fromSubId,
 		ToState:      wf.CurrentState.State.GetId(),
 		ToSubstate:   toSubId,

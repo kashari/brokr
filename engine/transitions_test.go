@@ -401,6 +401,92 @@ func TestApplyTransitionInternalKindErrorDoesNotRecordJourney(t *testing.T) {
 	_ = ctxMap
 }
 
+// dto.JourneyEntry's convention (shared with dto.GraphNode and the
+// visualizer frontend) is that *State fields always name a TOP-LEVEL state
+// and *Substate fields always name a substate. Inside a composite,
+// EffectiveId() returns the substate, so recording it as FromState would
+// duplicate FromSubstate and never name the composite at all.
+func TestApplyTransitionJourneyRecordsTopLevelFromState(t *testing.T) {
+	newFixture := func() (*persistence.WorkflowInstance, *model.CompositeState) {
+		collecting := &model.SimpleState{Type: "SimpleState", Id: "collecting"}
+		verifying := &model.ActionState{Type: "ActionState", Id: "verifying"}
+		comp := &model.CompositeState{
+			Type: "CompositeState", Id: "review", InitialSubstate: "collecting",
+			Substates:      []model.State{collecting, verifying},
+			SubTransitions: []model.Transition{{Source: "collecting", Target: "verifying", Event: "submit"}},
+			History:        model.ShallowHistory,
+		}
+		done := &model.SimpleState{Type: "SimpleState", Id: "done"}
+		wf := &persistence.WorkflowInstance{
+			WorkflowDefinition: model.Workflow{
+				States:      []model.State{comp, done},
+				Transitions: []model.Transition{{Source: "review", Target: "done", Event: "abandon"}},
+			},
+			// The instance starts INSIDE the composite, on its initial substate.
+			CurrentState: persistence.StateContainer{State: comp, Substate: collecting},
+		}
+		return wf, comp
+	}
+
+	assertLast := func(t *testing.T, wf *persistence.WorkflowInstance, wantFrom, wantFromSub, wantTo, wantToSub string) {
+		t.Helper()
+		if len(wf.Journey) == 0 {
+			t.Fatal("expected a journey entry to be appended")
+		}
+		got := wf.Journey[len(wf.Journey)-1]
+		if got.FromState != wantFrom || got.FromSubstate != wantFromSub || got.ToState != wantTo || got.ToSubstate != wantToSub {
+			t.Fatalf("journey entry = {From:%q FromSub:%q To:%q ToSub:%q}, want {From:%q FromSub:%q To:%q ToSub:%q}",
+				got.FromState, got.FromSubstate, got.ToState, got.ToSubstate,
+				wantFrom, wantFromSub, wantTo, wantToSub)
+		}
+	}
+
+	t.Run("sub-transition inside the composite", func(t *testing.T) {
+		wf, _ := newFixture()
+		tr, ok := findCandidateTransition(wf, "submit", nil)
+		if !ok {
+			t.Fatal("expected to find the submit sub-transition")
+		}
+		if _, _, err := applyTransition(context.Background(), "id", wf, tr, nil); err != nil {
+			t.Fatal(err)
+		}
+		if wf.CurrentState.State.GetId() != "review" || wf.CurrentState.EffectiveId() != "verifying" {
+			t.Fatalf("position = %q/%q, want review/verifying", wf.CurrentState.State.GetId(), wf.CurrentState.EffectiveId())
+		}
+		// FromState names the composite, NOT the substate it duplicates.
+		assertLast(t, wf, "review", "collecting", "review", "verifying")
+	})
+
+	t.Run("transition leaving the composite", func(t *testing.T) {
+		wf, _ := newFixture()
+		tr, ok := findCandidateTransition(wf, "abandon", nil)
+		if !ok {
+			t.Fatal("expected to find the abandon transition (bubbled out of the composite)")
+		}
+		if _, _, err := applyTransition(context.Background(), "id", wf, tr, nil); err != nil {
+			t.Fatal(err)
+		}
+		assertLast(t, wf, "review", "collecting", "done", "")
+	})
+
+	t.Run("internal transition inside the composite", func(t *testing.T) {
+		wf, comp := newFixture()
+		comp.SubTransitions = append(comp.SubTransitions, model.Transition{
+			Source: "collecting", Target: "collecting", Event: "ping", Kind: model.InternalKind,
+		})
+		tr, ok := findCandidateTransition(wf, "ping", nil)
+		if !ok {
+			t.Fatal("expected to find the ping internal sub-transition")
+		}
+		if _, moved, err := applyTransition(context.Background(), "id", wf, tr, nil); err != nil {
+			t.Fatal(err)
+		} else if moved {
+			t.Fatal("an internal transition must report moved=false")
+		}
+		assertLast(t, wf, "review", "collecting", "review", "collecting")
+	})
+}
+
 func TestInitialJourneyEntry(t *testing.T) {
 	state := &model.SimpleState{Type: "SimpleState", Id: "s1"}
 
