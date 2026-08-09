@@ -428,6 +428,62 @@ function LiveTab({ data, liveEvents, connected }) {
   `;
 }
 
+function DefinitionNodeCard({ node, graph }) {
+  const outgoing = graph.edges.filter((e) => e.source === node.id);
+  return html`
+    <div className="glass-panel rounded-lg p-md border border-outline-variant/20">
+      <div className="flex items-center justify-between mb-sm">
+        <div className="flex items-center gap-sm">
+          ${node.isInitial && html`<span className="font-code-xs text-code-xs bg-secondary/10 text-secondary px-2 py-1 rounded">Initial</span>`}
+          ${node.isEnd && html`<span className="font-code-xs text-code-xs bg-tertiary/10 text-tertiary px-2 py-1 rounded">End</span>`}
+          <span className="font-code-sm text-code-sm text-on-surface font-bold">${node.bulletName || node.id}</span>
+          <span className="font-code-xs text-code-xs text-on-surface-variant">(${node.id})</span>
+        </div>
+        <span className="font-code-xs text-code-xs text-on-surface-variant">${node.type}</span>
+      </div>
+      ${node.substates && node.substates.length > 0 && html`
+        <div className="font-code-xs text-code-xs text-on-surface-variant mb-sm">Substates: ${node.substates.join(', ')}</div>
+      `}
+      <${ActionGroup} title="Entry Actions" actions=${node.entryActions} tone="primary" />
+      <${ActionGroup} title="Exit Actions" actions=${node.exitActions} tone="secondary" />
+      <${ActionGroup} title="Do Actions" actions=${node.doActions} tone="primary" />
+      ${outgoing.length > 0 && html`
+        <div className="mt-md pt-md border-t border-outline-variant/20 space-y-xs">
+          <span className="font-label-caps text-label-caps text-on-surface-variant">Outgoing Transitions</span>
+          ${outgoing.map((e) => html`
+            <div key=${e.id} className="font-code-xs text-code-xs text-on-surface flex items-center gap-sm flex-wrap">
+              <span className="material-symbols-outlined text-[14px] text-primary">arrow_forward</span>
+              <span className="text-primary">${e.event || '(automatic)'}</span> → <span>${e.target}</span>
+              ${e.trigger && html`<span className="text-on-surface-variant">[${e.trigger}]</span>`}
+              ${e.guard && html`<span className="text-secondary">if ${e.guard.key} ${e.guard.op} ${e.guard.value}</span>`}
+            </div>
+          `)}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function DefinitionTab({ graph }) {
+  const [filter, setFilter] = React.useState('');
+  const topNodes = graph.nodes.filter((n) => !n.parentId);
+  const q = filter.trim().toLowerCase();
+  const visible = topNodes.filter((n) => !q || n.id.toLowerCase().includes(q) || (n.bulletName || '').toLowerCase().includes(q));
+
+  return html`
+    <div className="w-full max-w-5xl h-full overflow-y-auto pr-sm">
+      <div className="flex items-center justify-between mb-md sticky top-0 bg-background/80 backdrop-blur-sm py-sm">
+        <h2 className="font-headline-md text-headline-md text-on-surface">Workflow Definition</h2>
+        <input className="bg-surface-container border border-outline-variant/40 rounded px-md py-xs font-code-sm text-code-sm text-on-surface w-64"
+          placeholder="Filter states…" value=${filter} onInput=${(e) => setFilter(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-1 gap-md">
+        ${visible.map((n) => html`<${DefinitionNodeCard} key=${n.id} node=${n} graph=${graph} />`)}
+      </div>
+    </div>
+  `;
+}
+
 function App() {
   const id = React.useMemo(() => {
     const m = window.location.pathname.match(/\/workflows\/([^/]+)\/visualizer/);
@@ -443,7 +499,7 @@ function App() {
     <${Shell} tab=${tab} onTab=${setTab} instanceId=${id} data=${data}>
       ${tab === 'visualizer' && html`<${VisualizerTab} data=${data} />`}
       ${tab === 'live' && html`<${LiveTab} data=${data} liveEvents=${liveEvents} connected=${connected} />`}
-      ${tab === 'definition' && html`<div className="text-on-surface-variant">Definition tab lands in Task 8.</div>`}
+      ${tab === 'definition' && html`<${DefinitionTab} graph=${data.graph} />`}
       ${tab === 'history' && html`<div className="text-on-surface-variant">History tab lands in Task 9.</div>`}
       ${tab === 'metrics' && html`<div className="text-on-surface-variant">Metrics tab lands in Task 9.</div>`}
     <//>
