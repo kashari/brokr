@@ -31,6 +31,8 @@ func main() {
 	router.POST("/workflows/:id/events", web.SendEventToInstance)
 	router.GET("/workflows/:id/possible-events", web.GetPossibleEvents)
 	router.GET("/workflows/:id/context", web.GetContext)
+	router.GET("/workflows/:id/visualization-data", web.GetVisualizationData)
+	router.GET("/workflows/:id/visualizer", web.GetVisualizerPage)
 	router.SSE("/workflows/:id/events/stream", web.StreamWorkflowInstanceEvents)
 	router.POST("/workflows/:id/children", web.CreateChildBlueprint)
 	router.GET("/workflows/:id/children", web.GetChildren)

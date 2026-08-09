@@ -147,3 +147,23 @@ func StreamWorkflowInstanceEvents(ctx *draupnir.Context, stream *draupnir.SSEStr
 		}
 	}
 }
+
+// GetVisualizationData returns the full visualizer payload for workflow
+// instance :id — its own summary, its definition's analyzed graph, its
+// recorded journey, and the events it could accept right now.
+func GetVisualizationData(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	data, err := engine.GetVisualizationData(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, data)
+}
+
+// GetVisualizerPage serves the single-file React visualizer app. The
+// instance id is read client-side from the URL path — every instance gets
+// the same static HTML, which then fetches GetVisualizationData for its id.
+func GetVisualizerPage(ctx *draupnir.Context) {
+	ctx.HTML(http.StatusOK, visualizerHTML)
+}
