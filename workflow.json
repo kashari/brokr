@@ -88,7 +88,8 @@
       "bulletName": "Identity Verification Failed",
       "resumeEvent": "resume_identity_verification_failed",
       "productStatus": "IN_PROGRESS",
-      "status": "FAILED"
+      "status": "FAILED",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -139,7 +140,8 @@
       "bulletName": "Address Verification Failed",
       "resumeEvent": "resume_address_verification_failed",
       "productStatus": "IN_PROGRESS",
-      "status": "FAILED"
+      "status": "FAILED",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -327,7 +329,8 @@
       "bulletName": "Compliance Rejected",
       "resumeEvent": "",
       "productStatus": "TERMINATED",
-      "status": "REJECTED"
+      "status": "REJECTED",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -377,7 +380,8 @@
       "bulletName": "Credit Check Failed",
       "resumeEvent": "resume_credit_check_failed",
       "productStatus": "IN_PROGRESS",
-      "status": "FAILED"
+      "status": "FAILED",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -478,7 +482,8 @@
                 "bulletName": "Joint Applicant Declined",
                 "resumeEvent": "",
                 "productStatus": "TERMINATED",
-                "status": "REJECTED"
+                "status": "REJECTED",
+                "isHappyFlow": false
               }
             ],
             "transitions": [
@@ -555,7 +560,8 @@
       "bulletName": "Terms Declined",
       "resumeEvent": "",
       "productStatus": "TERMINATED",
-      "status": "REJECTED"
+      "status": "REJECTED",
+      "isHappyFlow": false
     },
     {
       "type": "ActionState",
@@ -611,7 +617,8 @@
       "bulletName": "Deposit Failed",
       "resumeEvent": "resume_initial_deposit_failed",
       "productStatus": "IN_PROGRESS",
-      "status": "FAILED"
+      "status": "FAILED",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -728,7 +735,8 @@
       "bulletName": "Application Rejected",
       "resumeEvent": "",
       "productStatus": "TERMINATED",
-      "status": "REJECTED"
+      "status": "REJECTED",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -737,7 +745,8 @@
       "bulletName": "Application Withdrawn",
       "resumeEvent": "",
       "productStatus": "TERMINATED",
-      "status": "WITHDRAWN"
+      "status": "WITHDRAWN",
+      "isHappyFlow": false
     },
     {
       "type": "SimpleState",
@@ -746,7 +755,8 @@
       "bulletName": "Application Expired",
       "resumeEvent": "",
       "productStatus": "TERMINATED",
-      "status": "EXPIRED"
+      "status": "EXPIRED",
+      "isHappyFlow": false
     }
   ],
   "transitions": [

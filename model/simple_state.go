@@ -10,6 +10,7 @@ type SimpleState struct {
 	ResumeEvent    string `json:"resumeEvent"`
 	ProductStatus  string `json:"productStatus"`
 	Status         string `json:"status"`
+	IsHappyFlow    *bool  `json:"isHappyFlow,omitempty"`
 }
 
 func (s *SimpleState) IsResumable() bool {
@@ -42,6 +43,10 @@ func (s *SimpleState) GetProductStatus() string {
 
 func (s *SimpleState) GetStatus() string {
 	return s.Status
+}
+
+func (s *SimpleState) GetIsHappyFlow() bool {
+	return s.IsHappyFlow == nil || *s.IsHappyFlow
 }
 
 func (s *SimpleState) ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {

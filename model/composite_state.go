@@ -39,6 +39,7 @@ type CompositeState struct {
 	Substates       []State      `json:"substates"`
 	SubTransitions  []Transition `json:"subTransitions"`
 	History         HistoryKind  `json:"history,omitempty"`
+	IsHappyFlow     *bool        `json:"isHappyFlow,omitempty"`
 }
 
 func (s *CompositeState) IsResumable() bool        { return s.ResumeEvent != "" }
@@ -50,6 +51,7 @@ func (s *CompositeState) GetResumeEvent() string   { return s.ResumeEvent }
 func (s *CompositeState) GetProductStatus() string { return s.ProductStatus }
 func (s *CompositeState) GetStatus() string        { return s.Status }
 func (s *CompositeState) GetDoActions() []Action   { return nil }
+func (s *CompositeState) GetIsHappyFlow() bool     { return s.IsHappyFlow == nil || *s.IsHappyFlow }
 
 func (s *CompositeState) ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
 	return ExecuteActions(ctx, token, ctxMap, s.EntryActions)

@@ -99,6 +99,14 @@ type State interface {
 	GetResumeEvent() string
 	GetProductStatus() string
 	GetStatus() string
+	// GetIsHappyFlow reports whether this state sits on the workflow's
+	// intended/expected path, as opposed to an error, rejection, or retry
+	// path — purely descriptive metadata for visualizers, consulted nowhere
+	// in the engine's own transition logic. Authored via the JSON field
+	// "isHappyFlow", which defaults to true (a *bool field distinguishes
+	// "absent" from "explicitly false", since a plain bool's zero value
+	// would otherwise silently default new states to false).
+	GetIsHappyFlow() bool
 	ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
 	ExecuteExitActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error)
 	GetDoActions() []Action

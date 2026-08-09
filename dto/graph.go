@@ -78,6 +78,7 @@ type GraphNode struct {
 	ResumeEvent     string               `json:"resumeEvent,omitempty"`
 	IsInitial       bool                 `json:"isInitial"`
 	IsEnd           bool                 `json:"isEnd"`
+	IsHappyFlow     bool                 `json:"isHappyFlow"`
 	ParentId        string               `json:"parentId,omitempty"`
 	EntryActions    []GraphActionSummary `json:"entryActions,omitempty"`
 	ExitActions     []GraphActionSummary `json:"exitActions,omitempty"`
@@ -145,6 +146,7 @@ func nodeFor(s model.State, parentId string, endStates map[string]bool, initialI
 		ResumeEvent:    s.GetResumeEvent(),
 		IsInitial:      s.GetId() == initialId,
 		IsEnd:          endStates[s.GetId()],
+		IsHappyFlow:    s.GetIsHappyFlow(),
 		ParentId:       parentId,
 		EntryActions:   summarizeActions(entry),
 		ExitActions:    summarizeActions(exit),

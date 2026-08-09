@@ -229,3 +229,43 @@ func TestBuildGraphWithCompositeState(t *testing.T) {
 		t.Fatalf("got %d top-level edges, want exactly 2", foundTopEdges)
 	}
 }
+
+func TestBuildGraphIsHappyFlowDefaultsTrueAndRespectsOverride(t *testing.T) {
+	falseVal := false
+
+	happy := &model.SimpleState{Type: "SimpleState", Id: "happy"} // IsHappyFlow left nil
+	unhappy := &model.ActionState{Type: "ActionState", Id: "unhappy", IsHappyFlow: &falseVal}
+	comp := &model.CompositeState{
+		Type: "CompositeState", Id: "comp", InitialSubstate: "happy",
+		Substates: []model.State{happy},
+	}
+
+	wf := model.Workflow{
+		States: []model.State{comp, unhappy},
+	}
+	g := BuildGraph(wf)
+
+	var compNode, subNode, unhappyNode *GraphNode
+	for i := range g.Nodes {
+		switch g.Nodes[i].Id {
+		case "comp":
+			compNode = &g.Nodes[i]
+		case "happy":
+			subNode = &g.Nodes[i]
+		case "unhappy":
+			unhappyNode = &g.Nodes[i]
+		}
+	}
+	if compNode == nil || subNode == nil || unhappyNode == nil {
+		t.Fatalf("missing expected nodes: comp=%v happy=%v unhappy=%v", compNode, subNode, unhappyNode)
+	}
+	if !compNode.IsHappyFlow {
+		t.Error("composite state with nil IsHappyFlow should default to true")
+	}
+	if !subNode.IsHappyFlow {
+		t.Error("substate with nil IsHappyFlow should default to true")
+	}
+	if unhappyNode.IsHappyFlow {
+		t.Error("state with IsHappyFlow explicitly false should report false")
+	}
+}

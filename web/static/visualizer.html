@@ -53,7 +53,10 @@ tailwind.config = {
 <style>
   html, body { background: #0b1326; }
   .glass-panel { background: rgba(19, 27, 46, 0.7); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(133, 147, 151, 0.2); }
-  .node-active { box-shadow: 0 0 24px rgba(186, 242, 255, 0.15), inset 0 0 12px rgba(186, 242, 255, 0.1); border-color: rgba(186, 242, 255, 0.5); }
+  /* No border-color here: the active card's border is state-colored (see
+     stateColorClasses) — this only supplies the glow, so it stays neutral
+     regardless of which of the four state colors currently applies. */
+  .node-active { box-shadow: 0 0 24px rgba(255, 255, 255, 0.08), inset 0 0 12px rgba(255, 255, 255, 0.05); }
   .slide-out-left { animation: slideOutLeft 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
   .slide-in-right { animation: slideInRight 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
   @keyframes slideOutLeft { to { transform: translateX(-40px); opacity: 0; } }
@@ -75,6 +78,29 @@ function nodeById(graph, id) {
 }
 function edgesFrom(graph, sourceId) {
   return graph.edges.filter((e) => e.source === sourceId);
+}
+
+// stateColorClasses classifies a GraphNode by isEnd × isHappyFlow into the
+// visualizer's four-color scheme: red = unhappy end, green = happy end,
+// blue = intermediary on the happy path, orange = intermediary off it.
+// Used everywhere a state renders as a card (Visualizer, Live, Definition),
+// so the same node always reads the same color regardless of which tab
+// shows it. A null node (e.g. no "Came From" at the start of a journey)
+// gets a neutral, uncommitted style.
+function stateColorClasses(node) {
+  if (!node) {
+    return { border: 'border-outline-variant/30', text: 'text-on-surface-variant', bg: 'bg-surface-container', dot: 'bg-on-surface-variant', label: 'Unknown' };
+  }
+  if (node.isEnd && !node.isHappyFlow) {
+    return { border: 'border-error', text: 'text-error', bg: 'bg-error/10', dot: 'bg-error', label: 'Unhappy End' };
+  }
+  if (node.isEnd && node.isHappyFlow) {
+    return { border: 'border-secondary', text: 'text-secondary', bg: 'bg-secondary/10', dot: 'bg-secondary', label: 'Happy End' };
+  }
+  if (!node.isEnd && node.isHappyFlow) {
+    return { border: 'border-primary', text: 'text-primary', bg: 'bg-primary/10', dot: 'bg-primary', label: 'Happy Path' };
+  }
+  return { border: 'border-orange-400', text: 'text-orange-400', bg: 'bg-orange-400/10', dot: 'bg-orange-400', label: 'Off Happy Path' };
 }
 
 function useVisualizationData(id) {
@@ -207,22 +233,23 @@ function ActionGroup({ title, actions, tone }) {
 
 function StateCard({ label, node, stateId, variant }) {
   const title = node ? (node.bulletName || node.id) : (stateId || '—');
+  const colors = stateColorClasses(node);
   if (variant !== 'active') {
     return html`
-      <div className="glass-panel rounded-lg p-md w-64 opacity-70 flex-shrink-0 flex flex-col items-center border border-outline-variant/30">
+      <div className=${`glass-panel rounded-lg p-md w-64 opacity-70 flex-shrink-0 flex flex-col items-center border ${colors.border}`}>
         <div className="text-on-surface-variant font-label-caps text-label-caps mb-sm uppercase tracking-wider">${label}</div>
         <div className="font-code-sm text-code-sm text-on-surface py-sm px-md bg-surface-container rounded w-full text-center truncate">${title}</div>
       </div>
     `;
   }
   return html`
-    <div className="glass-panel node-active rounded-xl p-lg w-96 flex-shrink-0 flex flex-col shadow-2xl relative z-10">
+    <div className=${`glass-panel node-active rounded-xl p-lg w-96 flex-shrink-0 flex flex-col shadow-2xl relative z-10 border ${colors.border}`}>
       <div className="flex items-center justify-between border-b border-outline-variant/30 pb-sm mb-md">
-        <div className="flex items-center gap-sm text-primary">
+        <div className=${`flex items-center gap-sm ${colors.text}`}>
           <span className="material-symbols-outlined" style=${{fontVariationSettings: "'FILL' 1"}}>adjust</span>
           <span className="font-label-caps text-label-caps uppercase tracking-widest">${label}</span>
         </div>
-        <span className="font-code-xs text-code-xs text-secondary bg-secondary/10 px-2 py-1 rounded">${node && node.isEnd ? 'End' : 'Active'}</span>
+        <span className=${`font-code-xs text-code-xs px-2 py-1 rounded ${colors.text} ${colors.bg}`}>${node ? colors.label : 'Active'}</span>
       </div>
       <h3 className="font-headline-md text-headline-md font-bold text-on-surface text-center mb-lg font-code-sm">${title}</h3>
       <${ActionGroup} title="Entry Actions" actions=${node ? node.entryActions : null} tone="primary" />
@@ -253,8 +280,10 @@ function VisualizerTab({ data }) {
   const currentId = entry.toSubstate || entry.toState;
   const cameFromId = entry.fromSubstate || entry.fromState || null;
   const currentNode = nodeById(data.graph, currentId);
+  // A state can have more than one real (non-automatic) outgoing transition —
+  // show every candidate, not just the first, so a branch point actually
+  // reads as one.
   const outgoing = edgesFrom(data.graph, currentId).filter((e) => e.trigger !== 'AUTOMATIC');
-  const nextEdge = outgoing[0] || null;
   const isLive = viewIndex === journey.length - 1;
 
   return html`
@@ -267,13 +296,22 @@ function VisualizerTab({ data }) {
       `}
       <${StateCard} label="Came From" stateId=${cameFromId} node=${cameFromId ? nodeById(data.graph, cameFromId) : null} variant="ghost" />
       <${StateCard} label=${isLive ? 'Current State' : 'State At This Step'} stateId=${currentId} node=${currentNode} variant="active" />
-      ${nextEdge ? html`
-        <div className="glass-panel rounded-lg p-md w-64 opacity-70 flex-shrink-0 flex flex-col items-center border border-outline-variant/30">
-          <div className="text-on-surface-variant font-label-caps text-label-caps mb-sm uppercase tracking-wider">Goes To</div>
-          <div className="font-code-sm text-code-sm text-primary py-sm px-md bg-primary/5 border border-primary/20 rounded w-full text-center truncate">${nextEdge.target}</div>
-          <div className="mt-sm font-code-xs text-code-xs text-on-surface-variant flex items-center gap-xs">
-            <span className="material-symbols-outlined text-[14px]">event</span> Event: ${nextEdge.event || '(automatic)'}
+      ${outgoing.length > 0 ? html`
+        <div className="glass-panel rounded-lg p-md w-64 flex-shrink-0 flex flex-col gap-xs border border-outline-variant/30 max-h-[420px] overflow-y-auto">
+          <div className="text-on-surface-variant font-label-caps text-label-caps mb-xs uppercase tracking-wider">
+            Goes To${outgoing.length > 1 ? ` (${outgoing.length})` : ''}
           </div>
+          ${outgoing.map((e) => {
+            const targetColors = stateColorClasses(nodeById(data.graph, e.target));
+            return html`
+              <div key=${e.id} className=${`font-code-sm text-code-sm py-sm px-md bg-surface-container rounded w-full border-l-4 ${targetColors.border}`}>
+                <div className=${`truncate ${targetColors.text}`}>${e.target}</div>
+                <div className="mt-xs font-code-xs text-code-xs text-on-surface-variant flex items-center gap-xs">
+                  <span className="material-symbols-outlined text-[14px]">event</span> ${e.event || '(automatic)'}
+                </div>
+              </div>
+            `;
+          })}
         </div>
       ` : html`
         <div className="glass-panel rounded-lg p-md w-64 opacity-50 flex-shrink-0 flex flex-col items-center border border-outline-variant/30">
@@ -402,6 +440,7 @@ function LiveTab({ data, liveEvents, connected }) {
 
   const node = displayState ? nodeById(data.graph, displayState.id) : null;
   const title = node ? (node.bulletName || node.id) : (displayState ? displayState.id : data.instance.currentState);
+  const colors = stateColorClasses(node);
   // Completion only changes the status row above the card. The card and the
   // feed keep rendering either way: the event that completes the instance is
   // the single most important one to see, and hiding the tab the moment
@@ -424,11 +463,12 @@ function LiveTab({ data, liveEvents, connected }) {
             <span className=${connected ? 'text-secondary' : 'text-error'}>${connected ? 'Live — connected' : 'Disconnected — retrying…'}</span>
           </div>
         `}
-      <div className=${`glass-panel node-active rounded-xl p-lg w-96 flex flex-col shadow-2xl ${anim}`}>
+      <div className=${`glass-panel node-active rounded-xl p-lg w-96 flex flex-col shadow-2xl border ${colors.border} ${anim}`}>
         <div className="flex items-center justify-between border-b border-outline-variant/30 pb-sm mb-md">
           <span className=${`font-label-caps text-label-caps uppercase tracking-widest ${complete ? 'text-tertiary' : 'text-primary'}`}>
             ${complete ? 'Final State' : 'Live State'}
           </span>
+          <span className=${`font-code-xs text-code-xs px-2 py-1 rounded ${colors.text} ${colors.bg}`}>${node ? colors.label : '—'}</span>
         </div>
         <h3 className="font-headline-md text-headline-md font-bold text-on-surface text-center font-code-sm">${title}</h3>
       </div>
@@ -461,14 +501,15 @@ function DefinitionNodeCard({ node, graph, nested }) {
   const substateNodes = hasSubstates && !nested
     ? node.substates.map((subId) => graph.nodes.find((n) => n.id === subId)).filter(Boolean)
     : [];
+  const colors = stateColorClasses(node);
   return html`
     <div className=${nested
-        ? 'rounded-lg p-md border border-primary/20 bg-surface-container/40'
-        : 'glass-panel rounded-lg p-md border border-outline-variant/20'}>
+        ? `rounded-lg p-md border-2 ${colors.border} bg-surface-container/40`
+        : `glass-panel rounded-lg p-md border-2 ${colors.border}`}>
       <div className="flex items-center justify-between mb-sm">
         <div className="flex items-center gap-sm">
           ${node.isInitial && html`<span className="font-code-xs text-code-xs bg-secondary/10 text-secondary px-2 py-1 rounded">Initial</span>`}
-          ${node.isEnd && html`<span className="font-code-xs text-code-xs bg-tertiary/10 text-tertiary px-2 py-1 rounded">End</span>`}
+          ${(node.isEnd || !node.isHappyFlow) && html`<span className=${`font-code-xs text-code-xs ${colors.bg} ${colors.text} px-2 py-1 rounded`}>${colors.label}</span>`}
           ${nested && html`<span className="font-code-xs text-code-xs bg-primary/10 text-primary px-2 py-1 rounded">Substate</span>`}
           <span className="font-code-sm text-code-sm text-on-surface font-bold">${node.bulletName || node.id}</span>
           <span className="font-code-xs text-code-xs text-on-surface-variant">(${node.id})</span>
@@ -518,12 +559,26 @@ function DefinitionTab({ graph }) {
   const q = filter.trim().toLowerCase();
   const visible = topNodes.filter((n) => !q || n.id.toLowerCase().includes(q) || (n.bulletName || '').toLowerCase().includes(q));
 
+  const legend = [
+    stateColorClasses({ isEnd: true, isHappyFlow: false }),
+    stateColorClasses({ isEnd: true, isHappyFlow: true }),
+    stateColorClasses({ isEnd: false, isHappyFlow: true }),
+    stateColorClasses({ isEnd: false, isHappyFlow: false }),
+  ];
+
   return html`
     <div className="w-full max-w-5xl h-full overflow-y-auto pr-sm">
-      <div className="flex items-center justify-between mb-md sticky top-0 bg-background/80 backdrop-blur-sm py-sm">
+      <div className="flex items-center justify-between mb-sm sticky top-0 bg-background/80 backdrop-blur-sm py-sm gap-md flex-wrap">
         <h2 className="font-headline-md text-headline-md text-on-surface">Workflow Definition</h2>
         <input className="bg-surface-container border border-outline-variant/40 rounded px-md py-xs font-code-sm text-code-sm text-on-surface w-64"
           placeholder="Filter states…" value=${filter} onInput=${(e) => setFilter(e.target.value)} />
+      </div>
+      <div className="flex items-center gap-lg mb-md font-code-xs text-code-xs text-on-surface-variant flex-wrap">
+        ${legend.map((c, i) => html`
+          <span key=${i} className="flex items-center gap-xs">
+            <span className=${`w-2 h-2 rounded-full ${c.dot}`}></span> ${c.label}
+          </span>
+        `)}
       </div>
       <div className="grid grid-cols-1 gap-md">
         ${visible.map((n) => html`<${DefinitionNodeCard} key=${n.id} node=${n} graph=${graph} />`)}

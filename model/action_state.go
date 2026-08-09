@@ -18,7 +18,8 @@ type ActionState struct {
 	// do-activity registry). Unlike EntryActions/ExitActions, a do-activity
 	// does not block the transition that starts it — it's UML's "activity
 	// concurrent with being in the state," not a state-change effect.
-	DoActions []Action `json:"doActions,omitempty"`
+	DoActions   []Action `json:"doActions,omitempty"`
+	IsHappyFlow *bool    `json:"isHappyFlow,omitempty"`
 }
 
 func (s *ActionState) IsResumable() bool {
@@ -51,6 +52,10 @@ func (s *ActionState) GetProductStatus() string {
 
 func (s *ActionState) GetStatus() string {
 	return s.Status
+}
+
+func (s *ActionState) GetIsHappyFlow() bool {
+	return s.IsHappyFlow == nil || *s.IsHappyFlow
 }
 
 func (s *ActionState) ExecuteEntryActions(ctx context.Context, token string, ctxMap map[string]string) (map[string]string, error) {
