@@ -348,6 +348,86 @@ function Shell({ tab, onTab, instanceId, data, children }) {
   `;
 }
 
+function LiveEventRow({ entry }) {
+  const stateId = entry.substate ? entry.substate.id : (entry.currentState ? entry.currentState.id : '—');
+  return html`
+    <div className="glass-panel rounded-lg p-md border border-outline-variant/20 flex items-center justify-between gap-md flex-wrap">
+      <div className="flex items-center gap-md">
+        <span className="font-code-xs text-code-xs text-on-surface-variant w-32 flex-shrink-0">${new Date(entry.receivedAt).toLocaleTimeString()}</span>
+        <span className="font-code-sm text-code-sm text-on-surface">${entry.event || '(automatic)'} → ${stateId}</span>
+      </div>
+      <span className="font-code-xs text-code-xs text-on-surface-variant truncate max-w-xs">${entry.lastTransition}</span>
+    </div>
+  `;
+}
+
+function LiveTab({ data, liveEvents, connected }) {
+  const [displayState, setDisplayState] = React.useState(null);
+  const [anim, setAnim] = React.useState('');
+  const seenCount = React.useRef(0);
+
+  // Seed the card from the instance's already-settled position once, the
+  // first time this tab has anything to show (before any live event has
+  // arrived this page load).
+  React.useEffect(() => {
+    if (displayState !== null) return;
+    const id = data.instance.currentSubstate || data.instance.currentState;
+    const node = nodeById(data.graph, id);
+    setDisplayState({ id, bulletName: node ? node.bulletName : id });
+  }, [data, displayState]);
+
+  // Every new liveEvents entry slides the card out, swaps its content, then
+  // slides the new state in — the animation is driven by the event arriving,
+  // not by a timer.
+  React.useEffect(() => {
+    if (liveEvents.length === seenCount.current) return;
+    seenCount.current = liveEvents.length;
+    const latest = liveEvents[liveEvents.length - 1];
+    const next = latest.substate || latest.currentState;
+    setAnim('slide-out-left');
+    const t = setTimeout(() => {
+      setDisplayState(next);
+      setAnim('slide-in-right');
+    }, 350);
+    return () => clearTimeout(t);
+  }, [liveEvents]);
+
+  if (data.instance.complete) {
+    return html`
+      <div className="glass-panel rounded-xl p-xl w-96 flex flex-col items-center gap-sm border border-outline-variant/30">
+        <span className="material-symbols-outlined text-tertiary" style=${{fontSize: '40px'}}>flag</span>
+        <h3 className="font-headline-md text-headline-md text-on-surface text-center">Final State Reached</h3>
+        <p className="text-on-surface-variant font-code-sm text-code-sm text-center">
+          This instance is complete (in ${data.instance.currentState}). It will never emit another transition, so there is nothing left to stream live.
+        </p>
+      </div>
+    `;
+  }
+
+  const node = displayState ? nodeById(data.graph, displayState.id) : null;
+  const title = node ? (node.bulletName || node.id) : (displayState ? displayState.id : data.instance.currentState);
+
+  return html`
+    <div className="w-full max-w-3xl flex flex-col items-center gap-lg">
+      <div className="flex items-center gap-sm font-code-xs text-code-xs uppercase tracking-widest">
+        <span className=${`w-2 h-2 rounded-full ${connected ? 'bg-secondary pulse-dot' : 'bg-error'}`}></span>
+        <span className=${connected ? 'text-secondary' : 'text-error'}>${connected ? 'Live — connected' : 'Disconnected — retrying…'}</span>
+      </div>
+      <div className=${`glass-panel node-active rounded-xl p-lg w-96 flex flex-col shadow-2xl ${anim}`}>
+        <div className="flex items-center justify-between border-b border-outline-variant/30 pb-sm mb-md">
+          <span className="font-label-caps text-label-caps uppercase tracking-widest text-primary">Live State</span>
+        </div>
+        <h3 className="font-headline-md text-headline-md font-bold text-on-surface text-center font-code-sm">${title}</h3>
+      </div>
+      <div className="w-full max-h-64 overflow-y-auto space-y-sm">
+        ${liveEvents.length === 0
+          ? html`<div className="text-on-surface-variant font-code-sm text-code-sm text-center">Waiting for the next event on this instance…</div>`
+          : liveEvents.slice().reverse().map((entry, i) => html`<${LiveEventRow} key=${i} entry=${entry} />`)}
+      </div>
+    </div>
+  `;
+}
+
 function App() {
   const id = React.useMemo(() => {
     const m = window.location.pathname.match(/\/workflows\/([^/]+)\/visualizer/);
@@ -362,7 +442,7 @@ function App() {
   return html`
     <${Shell} tab=${tab} onTab=${setTab} instanceId=${id} data=${data}>
       ${tab === 'visualizer' && html`<${VisualizerTab} data=${data} />`}
-      ${tab === 'live' && html`<div className="text-on-surface-variant">Live tab lands in Task 7.</div>`}
+      ${tab === 'live' && html`<${LiveTab} data=${data} liveEvents=${liveEvents} connected=${connected} />`}
       ${tab === 'definition' && html`<div className="text-on-surface-variant">Definition tab lands in Task 8.</div>`}
       ${tab === 'history' && html`<div className="text-on-surface-variant">History tab lands in Task 9.</div>`}
       ${tab === 'metrics' && html`<div className="text-on-surface-variant">Metrics tab lands in Task 9.</div>`}
