@@ -112,6 +112,16 @@ func TestWorkflowJSONFixtureDrivesRealTransitions(t *testing.T) {
 		t.Fatalf("after the automatic chain, state = %q, want applicant_type_selection", got)
 	}
 
+	if len(wf.Journey) != 1 {
+		t.Fatalf("after the automatic chain, Journey has %d entries, want 1: %+v", len(wf.Journey), wf.Journey)
+	}
+	if wf.Journey[0].FromState != "application_started" || wf.Journey[0].ToState != "applicant_type_selection" {
+		t.Fatalf("journey entry = %+v, want application_started -> applicant_type_selection", wf.Journey[0])
+	}
+	if wf.Journey[0].Event != "start" || wf.Journey[0].Trigger != model.AutomaticTrigger {
+		t.Fatalf("journey entry = %+v, want event=start trigger=AUTOMATIC", wf.Journey[0])
+	}
+
 	// A common transition ("withdraw", authored against a sourceList that
 	// includes applicant_type_selection) must resolve and apply.
 	tr, ok := findCandidateTransition(wf, "withdraw", ctxMap)
@@ -133,6 +143,13 @@ func TestWorkflowJSONFixtureDrivesRealTransitions(t *testing.T) {
 	}
 	if wf.LastTransition == "" {
 		t.Fatal("LastTransition must be stamped by applyTransition")
+	}
+
+	if len(wf.Journey) != 2 {
+		t.Fatalf("after withdraw, Journey has %d entries, want 2: %+v", len(wf.Journey), wf.Journey)
+	}
+	if wf.Journey[1].Event != "withdraw" || wf.Journey[1].ToState != "application_withdrawn" {
+		t.Fatalf("journey entry = %+v, want event=withdraw -> application_withdrawn", wf.Journey[1])
 	}
 
 	// application_withdrawn is an end state, so the instance is complete and

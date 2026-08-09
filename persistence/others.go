@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/kashari/brokr/dto"
 	"github.com/kashari/brokr/model"
 	"gorm.io/gorm"
 )
@@ -27,6 +28,13 @@ type WorkflowInstance struct {
 	// (Task 16); otherwise entry always uses the composite's
 	// InitialSubstate, ignoring this.
 	CompositeHistory map[string]string `json:"compositeHistory,omitempty" gorm:"type:jsonb;serializer:json"`
+	// Journey is the ordered history of every transition that has actually
+	// fired against this instance (its initial entry into its first state
+	// is prepended at creation — see engine.initialJourneyEntry), so a
+	// visualizer can render "what happened so far" without replaying the
+	// SSE stream from scratch. Appended in-memory by applyTransition and
+	// persisted in the same jsonb write as CurrentState.
+	Journey []dto.JourneyEntry `json:"journey" gorm:"type:jsonb;serializer:json"`
 	// Version is bumped on every persisted transition. It's an optimistic
 	// concurrency marker: the actor-per-instance dispatcher already serializes
 	// writes to one instance, so a stale Version would signal a serialization

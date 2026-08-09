@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/kashari/brokr/dto"
 	"github.com/kashari/brokr/model"
 	"github.com/kashari/brokr/persistence"
 )
@@ -201,15 +203,29 @@ func armStateActivities(id string, wf *persistence.WorkflowInstance, ctxMap map[
 // down through CreateChildWorkflowInstancesBatchWithGeneration; until then
 // the gap is documented rather than silent.
 func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowInstance, t model.Transition, ctxMap map[string]string) (map[string]string, bool, error) {
+	fromId := wf.CurrentState.EffectiveId()
+	fromSubId := ""
+	if wf.CurrentState.Substate != nil {
+		fromSubId = wf.CurrentState.Substate.GetId()
+	}
+
 	if t.Kind == model.InternalKind {
 		ctxMap, err := model.ExecuteActions(ctx, id, ctxMap, t.EntryActions)
+		wf.Journey = append(wf.Journey, dto.JourneyEntry{
+			Timestamp:    time.Now().UTC(),
+			Event:        t.Event,
+			Trigger:      t.Trigger,
+			Kind:         t.Kind,
+			FromState:    fromId,
+			FromSubstate: fromSubId,
+			ToState:      fromId,
+			ToSubstate:   fromSubId,
+		})
 		return ctxMap, false, err
 	}
 
 	stopDoActivity(id)
 	stopTimers(id)
-
-	fromId := wf.CurrentState.EffectiveId()
 
 	// local: staying inside the same composite (t.Target names one of its
 	// own substates), inferred rather than passed in — see Task 16's note.
@@ -295,6 +311,21 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 	}
 
 	wf.LastTransition = fmt.Sprintf("Event: %s, From: %s, To: %s", t.Event, fromId, wf.CurrentState.EffectiveId())
+
+	toSubId := ""
+	if wf.CurrentState.Substate != nil {
+		toSubId = wf.CurrentState.Substate.GetId()
+	}
+	wf.Journey = append(wf.Journey, dto.JourneyEntry{
+		Timestamp:    time.Now().UTC(),
+		Event:        t.Event,
+		Trigger:      t.Trigger,
+		Kind:         t.Kind,
+		FromState:    fromId,
+		FromSubstate: fromSubId,
+		ToState:      wf.CurrentState.State.GetId(),
+		ToSubstate:   toSubId,
+	})
 
 	// The new state's do-activity and timers are armed by the caller via
 	// armStateActivities, once this transition is actually committed.
