@@ -15,6 +15,10 @@ import (
 // indirected so tests can substitute a fake instead of needing a live DB.
 var createChildBatchFn = CreateChildWorkflowInstancesBatchWithGeneration
 
+// executeActionsFn is model.ExecuteActions, indirected so tests can
+// substitute a fake to inject errors or track calls.
+var executeActionsFn = model.ExecuteActions
+
 // findStateById returns the state in states with the given id, or nil.
 func findStateById(states []model.State, id string) model.State {
 	for _, s := range states {
@@ -210,17 +214,19 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 	}
 
 	if t.Kind == model.InternalKind {
-		ctxMap, err := model.ExecuteActions(ctx, id, ctxMap, t.EntryActions)
-		wf.Journey = append(wf.Journey, dto.JourneyEntry{
-			Timestamp:    time.Now().UTC(),
-			Event:        t.Event,
-			Trigger:      t.Trigger,
-			Kind:         t.Kind,
-			FromState:    fromId,
-			FromSubstate: fromSubId,
-			ToState:      fromId,
-			ToSubstate:   fromSubId,
-		})
+		ctxMap, err := executeActionsFn(ctx, id, ctxMap, t.EntryActions)
+		if err == nil {
+			wf.Journey = append(wf.Journey, dto.JourneyEntry{
+				Timestamp:    time.Now().UTC(),
+				Event:        t.Event,
+				Trigger:      t.Trigger,
+				Kind:         t.Kind,
+				FromState:    fromId,
+				FromSubstate: fromSubId,
+				ToState:      fromId,
+				ToSubstate:   fromSubId,
+			})
+		}
 		return ctxMap, false, err
 	}
 
@@ -305,7 +311,7 @@ func applyTransition(ctx context.Context, id string, wf *persistence.WorkflowIns
 		}
 	}
 
-	ctxMap, err = model.ExecuteActions(ctx, id, ctxMap, t.EntryActions)
+	ctxMap, err = executeActionsFn(ctx, id, ctxMap, t.EntryActions)
 	if err != nil {
 		return ctxMap, true, err
 	}

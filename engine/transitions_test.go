@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -367,4 +368,35 @@ func TestApplyTransitionDefersDoActivityArmingToCaller(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("armStateActivities did not start the settled state's do-activity")
 	}
+}
+
+func TestApplyTransitionInternalKindErrorDoesNotRecordJourney(t *testing.T) {
+	a := &model.ActionState{Type: "ActionState", Id: "a"}
+	wf := &persistence.WorkflowInstance{
+		WorkflowDefinition: model.Workflow{States: []model.State{a}},
+		CurrentState:       persistence.StateContainer{State: a},
+	}
+	// Mock executeActionsFn to return an error
+	restore := executeActionsFn
+	executeActionsFn = func(ctx context.Context, id string, ctxMap map[string]string, actions []model.Action) (map[string]string, error) {
+		return ctxMap, fmt.Errorf("action execution failed")
+	}
+	defer func() { executeActionsFn = restore }()
+
+	tr := model.Transition{
+		Source: "a", Target: "a", Event: "fail", Kind: model.InternalKind,
+		EntryActions: []model.Action{{Type: model.SetContextMapAction, Variables: map[string]string{"key": "val"}}},
+	}
+	initialJourneyLen := len(wf.Journey)
+	ctxMap, moved, err := applyTransition(context.Background(), "test-id", wf, tr, map[string]string{})
+	if err == nil {
+		t.Fatal("expected applyTransition to return an error, got nil")
+	}
+	if moved {
+		t.Fatal("internal transition must return moved=false")
+	}
+	if len(wf.Journey) != initialJourneyLen {
+		t.Fatalf("Journey length = %d, want %d (unchanged after failed internal transition)", len(wf.Journey), initialJourneyLen)
+	}
+	_ = ctxMap
 }
