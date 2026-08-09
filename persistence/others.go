@@ -34,6 +34,15 @@ type WorkflowInstance struct {
 	// visualizer can render "what happened so far" without replaying the
 	// SSE stream from scratch. Appended in-memory by applyTransition and
 	// persisted in the same jsonb write as CurrentState.
+	//
+	// Known limitation: this slice is unbounded and is rewritten in full on
+	// every transition, since it shares the same jsonb row as CurrentState —
+	// so both the row size and the per-transition write cost grow linearly
+	// with the number of transitions an instance has made. That is accepted
+	// for the workloads this engine targets (a bank-account-opening flow runs
+	// dozens of transitions, not thousands); a long-running or high-frequency
+	// instance would need this revisited — capping, paging, or moving the
+	// journey to its own append-only table.
 	Journey []dto.JourneyEntry `json:"journey" gorm:"type:jsonb;serializer:json"`
 	// Version is bumped on every persisted transition. It's an optimistic
 	// concurrency marker: the actor-per-instance dispatcher already serializes
