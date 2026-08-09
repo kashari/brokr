@@ -400,3 +400,21 @@ func TestApplyTransitionInternalKindErrorDoesNotRecordJourney(t *testing.T) {
 	}
 	_ = ctxMap
 }
+
+func TestInitialJourneyEntry(t *testing.T) {
+	state := &model.SimpleState{Type: "SimpleState", Id: "s1"}
+
+	entry := initialJourneyEntry(state, nil)
+	if entry.ToState != "s1" || entry.ToSubstate != "" || entry.Event != "" {
+		t.Fatalf("got %+v, want ToState=s1 ToSubstate=\"\" Event=\"\"", entry)
+	}
+	if entry.Timestamp.IsZero() {
+		t.Fatal("expected a non-zero timestamp")
+	}
+
+	sub := &model.SimpleState{Type: "SimpleState", Id: "sub1"}
+	entry2 := initialJourneyEntry(state, sub)
+	if entry2.ToState != "s1" || entry2.ToSubstate != "sub1" {
+		t.Fatalf("got %+v, want ToState=s1 ToSubstate=sub1", entry2)
+	}
+}

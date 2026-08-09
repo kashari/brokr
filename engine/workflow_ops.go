@@ -40,6 +40,7 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 		CurrentState:       persistence.StateContainer{State: initState, Substate: initSub},
 		LastTransition:     "",
 	}
+	wf.Journey = append(wf.Journey, initialJourneyEntry(initState, initSub))
 	// Chain any AUTOMATIC transitions out of the initial state before the
 	// instance is ever persisted — nothing is saved yet, so running the
 	// chain in-memory and creating once is simpler than wrapping this in

@@ -165,6 +165,22 @@ func resolveInitialPosition(state model.State) (model.State, model.State, error)
 	return comp, sub, nil
 }
 
+// initialJourneyEntry is the synthetic first dto.JourneyEntry for a
+// freshly-created instance — its entry into state/sub before any
+// transition has fired. NewWorkflowInstance and createChildWorkflowInstance
+// both prepend it to wf.Journey ahead of whatever runAutomaticChain adds.
+func initialJourneyEntry(state, sub model.State) dto.JourneyEntry {
+	subId := ""
+	if sub != nil {
+		subId = sub.GetId()
+	}
+	return dto.JourneyEntry{
+		Timestamp:  time.Now().UTC(),
+		ToState:    state.GetId(),
+		ToSubstate: subId,
+	}
+}
+
 // armStateActivities starts the do-activity and the deferred-transition
 // timers for wf's *settled* current state.
 //

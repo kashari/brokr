@@ -55,6 +55,7 @@ func createChildWorkflowInstance(parentId string, childDefinition model.Workflow
 		WorkflowDefinition: childDefinition,
 		CurrentState:       persistence.StateContainer{State: initState, Substate: initSub},
 	}
+	child.Journey = append(child.Journey, initialJourneyEntry(initState, initSub))
 	child.Complete = isEndState(*child)
 	if result := db.Create(child); result.Error != nil {
 		return uuid.Nil, result.Error
