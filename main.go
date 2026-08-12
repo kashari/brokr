@@ -21,7 +21,7 @@ func main() {
 	router := draupnir.New().WithFileLogging("brokr.log")
 
 	config.InitDB()
-	if err := config.Db.AutoMigrate(&persistence.WorkflowInstance{}); err != nil {
+	if err := config.Db.AutoMigrate(&persistence.WorkflowInstance{}, &persistence.WorkflowDefinition{}); err != nil {
 		golog.Error("Failed to auto-migrate schema: {}", err.Error())
 		panic("failed to auto-migrate schema: " + err.Error())
 	}
