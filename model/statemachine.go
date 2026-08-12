@@ -11,6 +11,7 @@ import (
 
 type Workflow struct {
 	Id                string             `json:"id"`
+	Kind              WorkflowKind       `json:"kind,omitempty"`
 	Version           string             `json:"version"`
 	Deprecated        bool               `json:"deprecated"`
 	CreationDate      string             `json:"creationDate"`
@@ -142,6 +143,20 @@ func (t *TriggerType) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("unknown transition trigger %q", raw)
 	}
 }
+
+// WorkflowKind classifies who authored a workflow definition. Every
+// definition that exists today is registered through cmd/seed-workflows,
+// which always represents a human-authored definition — so
+// ApplyDefaults force-sets this to UserWorkflowKind unconditionally,
+// regardless of what a JSON file provides (unlike every other field
+// ApplyDefaults touches, which only fills in what's missing). The type
+// exists so a future system-generated definition path has somewhere to
+// plug in without another schema change.
+type WorkflowKind string
+
+const (
+	UserWorkflowKind WorkflowKind = "USER"
+)
 
 // TransitionKind is the UML transition kind: External (default — exit
 // source, enter target, the only behavior the engine had until this
