@@ -7,11 +7,17 @@ import (
 
 	"github.com/kashari/brokr/config"
 	"github.com/kashari/brokr/persistence"
+	"github.com/kashari/golog"
 )
 
 func main() {
 	dir := flag.String("dir", "workflows", "directory of workflow definition JSON files")
 	flag.Parse()
+
+	if err := golog.Init("seed-workflows.log"); err != nil {
+		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
+		os.Exit(1)
+	}
 
 	config.InitDB()
 	if err := config.Db.AutoMigrate(&persistence.WorkflowDefinition{}); err != nil {
