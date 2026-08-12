@@ -3,7 +3,9 @@ package web
 import (
 	"net/http"
 
+	"github.com/kashari/brokr/dto"
 	"github.com/kashari/brokr/engine"
+	"github.com/kashari/brokr/errors"
 	"github.com/kashari/brokr/model"
 	"github.com/kashari/draupnir"
 )
@@ -15,13 +17,21 @@ func errResp(msg string) map[string]string {
 // HTTP
 
 func CreateBlueprint(ctx *draupnir.Context) {
-	var bp model.Workflow
-	if err := ctx.BindJSON(&bp); err != nil {
+	var req dto.CreateInstanceRequest
+	if err := ctx.BindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errResp("invalid JSON: "+err.Error()))
 		return
 	}
-	id, err := engine.NewWorkflowInstance(bp)
+	if req.Name == "" {
+		ctx.JSON(http.StatusBadRequest, errResp("name is required"))
+		return
+	}
+	id, err := engine.NewWorkflowInstanceByName(req.Name)
 	if err != nil {
+		if _, notFound := err.(*errors.WorkflowDefinitionNotFoundError); notFound {
+			ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
 		return
 	}
