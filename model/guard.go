@@ -1,6 +1,11 @@
 package model
 
-import "strconv"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // GuardOp is a comparison operator evaluated against a Transition's or
 // CommonTransition's Guard.Key looked up in the workflow's ContextMap.
@@ -10,15 +15,32 @@ import "strconv"
 type GuardOp string
 
 const (
-	GuardEq        GuardOp = "eq"
-	GuardNeq       GuardOp = "neq"
-	GuardGt        GuardOp = "gt"
-	GuardGte       GuardOp = "gte"
-	GuardLt        GuardOp = "lt"
-	GuardLte       GuardOp = "lte"
-	GuardExists    GuardOp = "exists"
-	GuardNotExists GuardOp = "not_exists"
+	GuardEq        GuardOp = "EQ"
+	GuardNeq       GuardOp = "NEQ"
+	GuardGt        GuardOp = "GT"
+	GuardGte       GuardOp = "GTE"
+	GuardLt        GuardOp = "LT"
+	GuardLte       GuardOp = "LTE"
+	GuardExists    GuardOp = "EXISTS"
+	GuardNotExists GuardOp = "NOT_EXISTS"
 )
+
+// UnmarshalJSON canonicalizes to uppercase, mirroring TransitionKind's
+// UnmarshalJSON in statemachine.go.
+func (op *GuardOp) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	raw = strings.ToUpper(raw)
+	switch GuardOp(raw) {
+	case "", GuardEq, GuardNeq, GuardGt, GuardGte, GuardLt, GuardLte, GuardExists, GuardNotExists:
+		*op = GuardOp(raw)
+		return nil
+	default:
+		return fmt.Errorf("unknown guard op %q", raw)
+	}
+}
 
 // Guard is a condition on a Transition or CommonTransition, evaluated
 // against the workflow instance's ContextMap. A nil Guard always passes

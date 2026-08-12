@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestGuardEvaluate(t *testing.T) {
 	ctx := map[string]string{"riskScore": "72", "flag": "yes"}
@@ -33,5 +36,16 @@ func TestNilGuardAlwaysPasses(t *testing.T) {
 	var g *Guard
 	if !g.Evaluate(nil) {
 		t.Fatal("nil guard must always pass (unguarded transition)")
+	}
+}
+
+func TestGuardOpCaseInsensitiveUnmarshal(t *testing.T) {
+	data := []byte(`{"key":"flag","op":"exists"}`)
+	var g Guard
+	if err := json.Unmarshal(data, &g); err != nil {
+		t.Fatal(err)
+	}
+	if g.Op != GuardExists {
+		t.Fatalf("Op = %q, want %q", g.Op, GuardExists)
 	}
 }

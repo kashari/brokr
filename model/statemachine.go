@@ -126,6 +126,23 @@ const (
 	SystemTrigger    TriggerType = "SYSTEM"
 )
 
+// UnmarshalJSON canonicalizes to uppercase and rejects unrecognized
+// values, mirroring TransitionKind/ActionType — see their comments.
+func (t *TriggerType) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	raw = strings.ToUpper(raw)
+	switch TriggerType(raw) {
+	case "", AutomaticTrigger, UserTrigger, SystemTrigger:
+		*t = TriggerType(raw)
+		return nil
+	default:
+		return fmt.Errorf("unknown transition trigger %q", raw)
+	}
+}
+
 // TransitionKind is the UML transition kind: External (default — exit
 // source, enter target, the only behavior the engine had until this
 // field existed), Internal (effect only, no state change, no exit/entry),
@@ -134,11 +151,31 @@ const (
 type TransitionKind string
 
 const (
-	ExternalKind TransitionKind = "External"
-	InternalKind TransitionKind = "Internal"
-	ForkKind     TransitionKind = "Fork"
-	JoinKind     TransitionKind = "Join"
+	ExternalKind TransitionKind = "EXTERNAL"
+	InternalKind TransitionKind = "INTERNAL"
+	ForkKind     TransitionKind = "FORK"
+	JoinKind     TransitionKind = "JOIN"
 )
+
+// UnmarshalJSON accepts any case ("internal", "Internal", "INTERNAL", ...)
+// and canonicalizes to the uppercase form the constants above use, so an
+// author-typed definition doesn't have to match case exactly. An
+// unrecognized value (after uppercasing) is a parse error rather than a
+// silently-ignored/mismatched kind.
+func (k *TransitionKind) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	raw = strings.ToUpper(raw)
+	switch TransitionKind(raw) {
+	case "", ExternalKind, InternalKind, ForkKind, JoinKind:
+		*k = TransitionKind(raw)
+		return nil
+	default:
+		return fmt.Errorf("unknown transition kind %q", raw)
+	}
+}
 
 type Transition struct {
 	// Trigger is JSON field "type" — AUTOMATIC/USER/SYSTEM. Empty is
@@ -191,10 +228,27 @@ type CommonTransition struct {
 type ActionType string
 
 const (
-	HttpRequestAction         ActionType = "HttpRequestAction"
-	SetContextMapAction       ActionType = "SetContextMapAction"
-	CreateChildWorkflowAction ActionType = "CreateChildWorkflowAction"
+	HttpRequestAction         ActionType = "HTTPREQUESTACTION"
+	SetContextMapAction       ActionType = "SETCONTEXTMAPACTION"
+	CreateChildWorkflowAction ActionType = "CREATECHILDWORKFLOWACTION"
 )
+
+// UnmarshalJSON canonicalizes to uppercase, mirroring TransitionKind's
+// UnmarshalJSON above.
+func (a *ActionType) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	raw = strings.ToUpper(raw)
+	switch ActionType(raw) {
+	case "", HttpRequestAction, SetContextMapAction, CreateChildWorkflowAction:
+		*a = ActionType(raw)
+		return nil
+	default:
+		return fmt.Errorf("unknown action type %q", raw)
+	}
+}
 
 type Action struct {
 	Type           ActionType        `json:"type"`
