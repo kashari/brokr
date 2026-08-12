@@ -63,3 +63,13 @@ func TestProcessEventUsesCommonTransitions(t *testing.T) {
 	t.Skip("no DB-backed coverage: processEvent's transaction, dispatch and post-commit defer are only manually verified")
 	_ = context.Background()
 }
+
+func TestNewWorkflowInstanceByNameRequiresLiveDB(t *testing.T) {
+	// NewWorkflowInstanceByName hits config.Db (both for the definition
+	// lookup and, on success, via NewWorkflowInstance) and has no
+	// automated coverage for the same reason NewWorkflowInstance itself
+	// doesn't — see TestProcessEventUsesCommonTransitions above. Manually
+	// verified via cmd/seed-workflows + POST /workflows against the local
+	// docker-compose db (see README "Registering workflow definitions").
+	t.Skip("no DB-backed coverage: see comment above")
+}

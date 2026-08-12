@@ -63,6 +63,20 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 	return id, nil
 }
 
+// NewWorkflowInstanceByName looks up the registered WorkflowDefinition
+// named name (see cmd/seed-workflows) and creates a new instance from it,
+// exactly as NewWorkflowInstance would if handed that definition
+// directly. Returns *errors.WorkflowDefinitionNotFoundError if no
+// definition is registered under name.
+func NewWorkflowInstanceByName(name string) (uuid.UUID, error) {
+	db := config.Db
+	var def persistence.WorkflowDefinition
+	if result := db.First(&def, "name = ?", name); result.Error != nil {
+		return uuid.Nil, &errors.WorkflowDefinitionNotFoundError{Name: name}
+	}
+	return NewWorkflowInstance(def.Definition)
+}
+
 // GetWorkflowInstance retrieves a workflow instance from the database by its unique identifier.
 //
 // It queries the database for a workflow instance with the specified ID and returns the corresponding workflow definition.

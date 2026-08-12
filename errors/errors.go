@@ -17,3 +17,11 @@ type ChildrenNotCompleteError struct {
 func (e *ChildrenNotCompleteError) Error() string {
 	return "cannot fire event '" + e.Event + "' from state '" + e.CurrentState + "': one or more child workflow instances have not completed"
 }
+
+type WorkflowDefinitionNotFoundError struct {
+	Name string
+}
+
+func (e *WorkflowDefinitionNotFoundError) Error() string {
+	return "no workflow definition registered under name '" + e.Name + "'"
+}
