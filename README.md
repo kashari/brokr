@@ -6,6 +6,7 @@ A finite state machine / workflow engine in Go, backed by Postgres, that impleme
 
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
+- [Registering workflow definitions](#registering-workflow-definitions)
 - [HTTP API reference](#http-api-reference)
 - [Configuration](#configuration)
 - [Usage examples](#usage-examples)
@@ -99,11 +100,22 @@ All three share these fields: `id`, `frontendBullet`, `bulletName`, `resumeEvent
 
 **Guards** — evaluated against the context map; a `nil`/absent guard always passes. See [§4](#4-guards-choice-pseudostate).
 
+## Registering workflow definitions
+
+Workflow definitions are no longer POSTed inline. Instead:
+
+1. Write a definition as simplified JSON — only `id` and `states` are required; everything else (`version`, `creationDate`/`updateDate`, `initialState`, each state's `status`/`productStatus`/`bulletName`, each transition's `type`/`kind`, each `HttpRequestAction`'s `method`) is filled in with a sensible default if omitted. An omitted `kind` on the top-level definition — or any value at all — is always registered as `"USER"`; it's not an author-settable field. See `workflows/order-lifecycle.json` for a minimal example, and any of the [worked examples](#usage-examples) below for the full field set a definition can use.
+2. Drop the file in `workflows/` (one definition per `*.json` file).
+3. Run the registration job: `go run ./cmd/seed-workflows` (add `-dir=<path>` to use a different directory). It upserts every file in the directory into the database, keyed by the definition's `id`.
+4. Create instances of it via `POST /workflows {"name": "<id>"}`.
+
+The four fields that classify a transition, a transition's kind, an action, or a guard — `type` (`AUTOMATIC`/`USER`/`SYSTEM`), `kind` (`EXTERNAL`/`INTERNAL`/`FORK`/`JOIN`), an action's `type` (`HTTPREQUESTACTION`/`SETCONTEXTMAPACTION`/`CREATECHILDWORKFLOWACTION`), and a guard's `op` (`EQ`/`NEQ`/`GT`/`GTE`/`LT`/`LTE`/`EXISTS`/`NOT_EXISTS`) — accept any case in the source JSON (`"automatic"`, `"Automatic"`, `"AUTOMATIC"` all work) but are always canonicalized to uppercase once registered; an unrecognized value is a registration error, not a silently-ignored one.
+
 ## HTTP API reference
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| `POST` | `/workflows` | a `Workflow` JSON document | `201 {"id": "..."}` |
+| `POST` | `/workflows` | `{"name": "<workflow-name>"}` | `201 {"id": "..."}` |
 | `GET` | `/workflows/:id` | — | `200` the workflow **definition** (see note below) |
 | `POST` | `/workflows/:id/events?event=name[&async=true]` | — | sync: `200` the resulting state id (a JSON string); async: `202 {"status":"accepted","id":"...","event":"..."}` |
 | `GET` | `/workflows/:id/possible-events` | — | `200` `["event1", "event2", ...]` |
@@ -141,7 +153,7 @@ All three share these fields: `id`, `frontendBullet`, `bulletName`, `resumeEvent
 
 ## Usage examples
 
-Every example is a complete, valid `Workflow` document you can `POST` as-is.
+Every example below is a complete, valid `Workflow` document — but as of [Registering workflow definitions](#registering-workflow-definitions), you register it as a file in `workflows/` and run `go run ./cmd/seed-workflows`, then create instances with `POST /workflows {"name": "<id>"}`, rather than POSTing the document itself.
 
 ### 1. Basic finite state machine
 
@@ -1058,8 +1070,8 @@ Every error response has the shape `{"error": "message"}`. Status codes in use t
 
 | Status | When |
 |---|---|
-| `400` | malformed JSON body on `POST /workflows` or `POST /workflows/:id/children` |
-| `404` | `GET /workflows/:id` or `GET /workflows/:id/context` for an unknown id |
+| `400` | malformed JSON body on `POST /workflows` (or a missing `name`) or `POST /workflows/:id/children` |
+| `404` | `GET /workflows/:id`, `GET /workflows/:id/context`, or `POST /workflows` for an unregistered `name` |
 | `500` | everything else — including "no transition found" and "children not complete" errors |
 
 Note that a business-logic rejection (no matching transition for the event you sent, or a join fired before its children finished) currently returns `500`, the same as an actual server error — there's no `400`/`409` distinction yet. Inspect the `error` message to tell them apart:
