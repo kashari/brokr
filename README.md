@@ -32,9 +32,10 @@ A finite state machine / workflow engine in Go, backed by Postgres, that impleme
 ```bash
 docker-compose up -d db      # Postgres 16, host port 5436, db "workflow"
 go run main.go                # listens on :8080 (or $PORT)
+go run ./cmd/seed-workflows   # registers every workflows/*.json definition (e.g. workflows/order-lifecycle.json)
 ```
 
-Schema migration runs automatically on startup (`AutoMigrate`). Every example below assumes the server is running at `http://localhost:8080`.
+Schema migration runs automatically on startup (`AutoMigrate`). Every example below assumes the server is running at `http://localhost:8080` and its workflow definitions are registered via `cmd/seed-workflows` — see [Registering workflow definitions](#registering-workflow-definitions).
 
 ## Core concepts
 
@@ -104,7 +105,7 @@ All three share these fields: `id`, `frontendBullet`, `bulletName`, `resumeEvent
 
 Workflow definitions are no longer POSTed inline. Instead:
 
-1. Write a definition as simplified JSON — only `id` and `states` are required; everything else (`version`, `creationDate`/`updateDate`, `initialState`, each state's `status`/`productStatus`/`bulletName`, each transition's `type`/`kind`, each `HttpRequestAction`'s `method`) is filled in with a sensible default if omitted. An omitted `kind` on the top-level definition — or any value at all — is always registered as `"USER"`; it's not an author-settable field. See `workflows/order-lifecycle.json` for a minimal example, and any of the [worked examples](#usage-examples) below for the full field set a definition can use.
+1. Write a definition as simplified JSON — only `id` and `states` are required; everything else (`version`, `creationDate`/`updateDate`, `initialState`, each state's `type` (defaults to `SimpleState`), each state's `status`/`productStatus`/`bulletName`, a `CompositeState`'s `initialSubstate` (defaults to its first substate), each transition's `type`/`kind`, each `HttpRequestAction`'s `method`) is filled in with a sensible default if omitted. An omitted `kind` on the top-level definition — or any value at all — is always registered as `"USER"`; it's not an author-settable field. See `workflows/order-lifecycle.json` for a minimal example, and any of the [worked examples](#usage-examples) below for the full field set a definition can use.
 2. Drop the file in `workflows/` (one definition per `*.json` file).
 3. Run the registration job: `go run ./cmd/seed-workflows` (add `-dir=<path>` to use a different directory). It upserts every file in the directory into the database, keyed by the definition's `id`.
 4. Create instances of it via `POST /workflows {"name": "<id>"}`.
@@ -204,7 +205,8 @@ sequenceDiagram
 Every step is a plain request/response — the User drives each transition explicitly, one event at a time, and each call blocks until the new state is committed.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @order.json | jq -r .id)
+cp order-lifecycle.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"order-lifecycle"}' | jq -r .id)
 
 curl -s "localhost:8080/workflows/$ID/possible-events"
 # ["pay","cancel"]
@@ -288,7 +290,8 @@ The `HttpRequestAction`'s response is awaited synchronously (since `expectRespon
 Actions within one list (a state's `entryActions`, here) run **serially in order**, so `HttpRequestAction` sees `orderId`/`amount` written by the `SetContextMapAction` immediately before it. This ordering matters: a transition's own `entryActions` run *after* the target state's `entryActions` have already finished, so don't rely on a transition-level `SetContextMapAction` to seed a value the target state's own entry actions need — put it earlier, in the target state's own list, as above.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @payment-flow.json | jq -r .id)
+cp payment-flow.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"payment-flow"}' | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=submit_payment"
 curl -s "localhost:8080/workflows/$ID/context"
 # {"orderId":"ORD-48213","amount":"49.99"}
@@ -347,7 +350,8 @@ sequenceDiagram
 Whichever state the User happens to be in when they withdraw, the same single `commonTransition` declaration handles it — there's no need for a separate `withdraw` transition per state.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @account-opening.json | jq -r .id)
+cp account-opening.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"account-opening"}' | jq -r .id)
 curl -s "localhost:8080/workflows/$ID/possible-events"
 # ["submit_details","withdraw"]   -- withdraw comes from the commonTransition
 
@@ -420,7 +424,8 @@ sequenceDiagram
 Only the first passing guard, in authored order, ever fires — the other two candidate transitions for the same `(source, event)` are simply skipped once one matches.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @credit-check.json | jq -r .id)
+cp credit-check.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"credit-check"}' | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=risk_score_received"
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=route"
 # "rejected"   (riskScore=85 matched the first, gte:80, guard)
@@ -475,7 +480,8 @@ sequenceDiagram
 The User never sends `start` — it isn't even a valid event to send manually in the sense that matters here; the hop happens on its own, synchronously, before `POST /workflows` even returns.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @onboarding-intake.json | jq -r .id)
+cp onboarding-intake.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"onboarding-intake"}' | jq -r .id)
 curl -s "localhost:8080/workflows/$ID/possible-events"
 # ["select_type"]   -- the instance already auto-advanced past application_started
 ```
@@ -531,7 +537,8 @@ sequenceDiagram
 `reminder_sent` can be sent any number of times — each call updates the context (`lastReminder`) but the instance never leaves `waiting_for_confirmation`, so nothing about the state itself (its entry/exit actions, any running do-activity) is disturbed.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @retry-demo.json | jq -r .id)
+cp retry-demo.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"retry-demo"}' | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=reminder_sent"
 # "waiting_for_confirmation"  -- unchanged; only the context map was touched
 curl -s "localhost:8080/workflows/$ID/context"
@@ -588,7 +595,8 @@ sequenceDiagram
 Only one of the two branches happens per instance — whichever comes first, the real `pay` event or the timer's own deadline, wins and cancels the other.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @payment-window.json | jq -r .id)
+cp payment-window.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"payment-window"}' | jq -r .id)
 # Option A: pay in time — the 15m timer is cancelled, no "timeout" ever fires.
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=pay"
 
@@ -660,7 +668,8 @@ sequenceDiagram
 The do-activity call to `reports.internal` starts the instant `generating_report` is entered and runs concurrently with everything else — the `cancel` path and the "report finishes" path race, and whichever transition actually fires first cancels the do-activity's context if it was still in flight.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @report-generation.json | jq -r .id)
+cp report-generation.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"report-generation"}' | jq -r .id)
 # The generate-report call is already running in the background at this point.
 
 # If the caller cancels before the report finishes, the in-flight HTTP
@@ -761,7 +770,8 @@ sequenceDiagram
 > **Do not mark a `Join` transition's `type` as `"AUTOMATIC"`.** Auto-join fires it by matching `kind: "Join"` alone, irrespective of `type` — but if `type` is also `"AUTOMATIC"`, the engine's *automatic-chaining* logic (used for [§5](#5-automatic-transitions-and-chaining)) has no concept of join-gating and will fire the transition the instant `awaiting_both_applicants` is entered, immediately and unconditionally, before either child has done anything. Leave `type` unset (as above) so it's picked up only by auto-join's children-complete check, never by the plain automatic-chain path.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @joint-application.json | jq -r .id)
+cp joint-application.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"joint-application"}' | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=fork_joint_applicants"
 # "awaiting_both_applicants" — both children were created in the same call
 
@@ -797,6 +807,8 @@ A join can still be dispatched manually too (`POST .../events?event=both_applica
 ### 10. Ad hoc child workflows (legacy pattern)
 
 Before formal `Fork`/`Join`, children were created via a `CreateChildWorkflowAction` in a transition's `entryActions`, and a plain `"join": true` boolean gated on **every** non-withdrawn child the instance has ever had (no generation scoping). This still works, unchanged, for simpler one-off children that don't need formal fork/join semantics:
+
+`POST /workflows/:id/children` — the other way to create an ad hoc child, spawned directly under an existing instance rather than via a transition's action list — is also part of this legacy pattern. Unlike `POST /workflows`, it still takes a full inline `Workflow` document and does not run it through the defaulting/normalization pipeline described in [Registering workflow definitions](#registering-workflow-definitions) — you must supply every field explicitly, including `kind` if you want it recorded as anything other than its JSON zero value.
 
 ```json
 {
@@ -865,7 +877,8 @@ sequenceDiagram
 Like §9's formal join, a legacy `"join": true` transition is *also* picked up by auto-join — `attemptAutoJoin` fires on `IsJoin()` alone, which is true for either form. The only real difference from §9 is scope: with no `forkGeneration` stamped on this child (ad hoc `CreateChildWorkflowAction` never sets one), the completeness check falls back to *every non-withdrawn child the instance has ever had*, not one fork's cohort.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @single-child-demo.json | jq -r .id)
+cp single-child-demo.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"single-child-demo"}' | jq -r .id)
 curl -s -X POST "localhost:8080/workflows/$ID/events?event=spawn_child"
 # "waiting_on_child"
 
@@ -957,7 +970,8 @@ sequenceDiagram
 `put_on_hold` and `close` are declared only against the composite's own id (`"review"`), not any individual substate — that's what makes them bubble-out transitions, tried only after `subTransitions` finds no match for the current substate.
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d @review-with-history.json | jq -r .id)
+cp review-with-history.json workflows/ && go run ./cmd/seed-workflows
+ID=$(curl -s -X POST localhost:8080/workflows -H "Content-Type: application/json" -d '{"name":"review-with-history"}' | jq -r .id)
 
 # Watch the live position with SSE (see §12) in one terminal:
 curl -N "localhost:8080/workflows/$ID/events/stream" &

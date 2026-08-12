@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	stderrors "errors"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -67,12 +68,18 @@ func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
 // named name (see cmd/seed-workflows) and creates a new instance from it,
 // exactly as NewWorkflowInstance would if handed that definition
 // directly. Returns *errors.WorkflowDefinitionNotFoundError if no
-// definition is registered under name.
+// definition is registered under name; any other lookup failure (a
+// dropped connection, a permissions error, a stored definition whose
+// jsonb no longer deserializes, etc.) is propagated as-is rather than
+// being reported as a not-found.
 func NewWorkflowInstanceByName(name string) (uuid.UUID, error) {
 	db := config.Db
 	var def persistence.WorkflowDefinition
 	if result := db.First(&def, "name = ?", name); result.Error != nil {
-		return uuid.Nil, &errors.WorkflowDefinitionNotFoundError{Name: name}
+		if stderrors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return uuid.Nil, &errors.WorkflowDefinitionNotFoundError{Name: name}
+		}
+		return uuid.Nil, result.Error
 	}
 	return NewWorkflowInstance(def.Definition)
 }

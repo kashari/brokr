@@ -109,3 +109,50 @@ func TestApplyDefaultsRecursesIntoCompositeSubstates(t *testing.T) {
 		t.Fatal("nested substate defaults were not applied")
 	}
 }
+
+func TestApplyDefaultsRecursesIntoForkTargetsAndCompositeActionsAndSubTransitions(t *testing.T) {
+	forkChild := &Workflow{Kind: "SYSTEM", States: []State{&SimpleState{Id: "fc"}}}
+	wf := &Workflow{
+		States: []State{
+			&SimpleState{Id: "a"},
+			&CompositeState{
+				Id:           "outer",
+				Substates:    []State{&SimpleState{Id: "inner"}},
+				EntryActions: []Action{{Type: HttpRequestAction, Url: "http://x"}},
+				ExitActions:  []Action{{Type: HttpRequestAction, Url: "http://y"}},
+				SubTransitions: []Transition{
+					{Source: "inner", Target: "inner", Event: "loop"},
+				},
+			},
+		},
+		Transitions: []Transition{
+			{
+				Source: "a", Target: "outer", Event: "fork",
+				ForkTargets: []ForkTarget{{ChildWorkflow: forkChild}},
+			},
+		},
+	}
+	ApplyDefaults(wf)
+
+	if forkChild.Kind != UserWorkflowKind {
+		t.Fatalf("ForkTarget.ChildWorkflow.Kind = %q, want %q", forkChild.Kind, UserWorkflowKind)
+	}
+	if forkChild.Version == "" {
+		t.Fatal("ForkTarget.ChildWorkflow.Version was not defaulted")
+	}
+
+	comp := wf.States[1].(*CompositeState)
+	if comp.EntryActions[0].Method != "GET" {
+		t.Fatalf("CompositeState.EntryActions[0].Method = %q, want GET", comp.EntryActions[0].Method)
+	}
+	if comp.ExitActions[0].Method != "GET" {
+		t.Fatalf("CompositeState.ExitActions[0].Method = %q, want GET", comp.ExitActions[0].Method)
+	}
+	sub := comp.SubTransitions[0]
+	if sub.Trigger != UserTrigger {
+		t.Fatalf("CompositeState.SubTransitions[0].Trigger = %q, want %q", sub.Trigger, UserTrigger)
+	}
+	if sub.Kind != ExternalKind {
+		t.Fatalf("CompositeState.SubTransitions[0].Kind = %q, want %q", sub.Kind, ExternalKind)
+	}
+}
