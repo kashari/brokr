@@ -34,3 +34,4 @@ go.work.sum
 CLAUDE.md
 *.log
 /docs/
+/.claude/
