@@ -1,0 +1,285 @@
+package engine
+
+import (
+	"context"
+	stderrors "errors"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+
+	"github.com/kashari/brokr/errors"
+	"github.com/kashari/brokr/internal/store"
+	"github.com/kashari/brokr/model"
+	"github.com/kashari/brokr/persistence"
+	"github.com/kashari/golog"
+)
+
+// NewWorkflowInstance creates a new workflow instance in the database based on the provided workflow definition.
+//
+// It generates a new UUID for the instance, sets the initial state, and saves it to the database,
+// then returns the UUID of the newly created workflow instance and any error encountered during the process.
+//
+// Parameters:
+// - workflowDefinition: The definition of the workflow to instantiate, including its states and transitions.
+//
+// Returns:
+//
+// - uuid.UUID: The unique identifier of the newly created workflow instance.
+//
+// - error: An error object if an error occurred during the creation process; otherwise, nil.
+func NewWorkflowInstance(workflowDefinition model.Workflow) (uuid.UUID, error) {
+	db := store.DB()
+	id := uuid.New()
+	golog.Info("Creating new workflow instance [{} -> {}] v. {}", id.String(), workflowDefinition.Id, workflowDefinition.Version)
+	initState, initSub, err := resolveInitialPosition(workflowDefinition.States[0])
+	if err != nil {
+		return uuid.Nil, err
+	}
+	wf := &persistence.WorkflowInstance{
+		Id:                 id,
+		WorkflowDefinition: workflowDefinition,
+		CurrentState:       persistence.StateContainer{State: initState, Substate: initSub},
+		LastTransition:     "",
+	}
+	wf.Journey = append(wf.Journey, initialJourneyEntry(initState, initSub))
+	// Chain any AUTOMATIC transitions out of the initial state before the
+	// instance is ever persisted — nothing is saved yet, so running the
+	// chain in-memory and creating once is simpler than wrapping this in
+	// a transaction the way processEvent has to.
+	ctxMap, _, err := runAutomaticChain(context.Background(), id.String(), wf, make(map[string]string))
+	if err != nil {
+		return uuid.Nil, err
+	}
+	wf.ContextMap = ctxMap
+	wf.Complete = isEndState(*wf)
+	if result := db.Create(wf); result.Error != nil {
+		return uuid.Nil, result.Error
+	}
+	// Arm the settled state's do-activity and deferred-transition timers.
+	// Only applyTransition used to do this, so an instance whose initial
+	// state carried doActions or an AUTOMATIC-with-after transition never
+	// armed either. Done after the insert commits, so nothing runs against
+	// a state the database does not hold (see armStateActivities).
+	armStateActivities(id.String(), wf, ctxMap)
+	return id, nil
+}
+
+// NewWorkflowInstanceByName looks up the registered WorkflowDefinition
+// named name (see cmd/seed-workflows) and creates a new instance from it,
+// exactly as NewWorkflowInstance would if handed that definition
+// directly. Returns *errors.WorkflowDefinitionNotFoundError if no
+// definition is registered under name; any other lookup failure (a
+// dropped connection, a permissions error, a stored definition whose
+// jsonb no longer deserializes, etc.) is propagated as-is rather than
+// being reported as a not-found.
+func NewWorkflowInstanceByName(name string) (uuid.UUID, error) {
+	db := store.DB()
+	var def persistence.WorkflowDefinition
+	if result := db.First(&def, "name = ?", name); result.Error != nil {
+		if stderrors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return uuid.Nil, &errors.WorkflowDefinitionNotFoundError{Name: name}
+		}
+		return uuid.Nil, result.Error
+	}
+	return NewWorkflowInstance(def.Definition)
+}
+
+// GetWorkflowInstance retrieves a workflow instance from the database by its unique identifier.
+//
+// It queries the database for a workflow instance with the specified ID and returns the corresponding workflow definition.
+//
+// Parameters:
+// - id: The unique identifier of the workflow instance to retrieve.
+//
+// Returns:
+//
+// - model.Workflow: The workflow definition associated with the specified instance ID.
+//
+// - error: An error object if an error occurred during retrieval or if the instance was not found; otherwise, nil.
+func GetWorkflowInstance(id string) (model.Workflow, error) {
+	db := store.DB()
+	var wf persistence.WorkflowInstance
+	result := db.First(&wf, "id = ?", id)
+	if result.Error != nil {
+		return model.Workflow{}, result.Error
+	}
+	return wf.WorkflowDefinition, nil
+}
+
+// GetWorkflowInstanceRaw returns the full persisted row for id, including
+// ContextMap and CurrentState — unlike GetWorkflowInstance, which only
+// returns the workflow definition.
+func GetWorkflowInstanceRaw(id string) (persistence.WorkflowInstance, error) {
+	db := store.DB()
+	var wf persistence.WorkflowInstance
+	result := db.First(&wf, "id = ?", id)
+	return wf, result.Error
+}
+
+// SendEventToWorkflowInstance processes an event for a specific workflow instance.
+//
+// It retrieves the workflow instance from the database, identifies the current state, and checks for a valid transition
+// based on the provided event. If a valid transition is found, it executes the exit actions of the current state,
+// updates the current state to the target state of the transition, executes the entry actions of the new state,
+// and saves the updated workflow instance back to the database.
+//
+// Parameters:
+//
+// - id: The unique identifier of the workflow instance to which the event is sent.
+//
+// - event: The event to process for the workflow instance.
+//
+// Returns:
+//
+// - string: The ID of the new current state after processing the event.
+//
+// - error: An error object if an error occurred during processing or if no valid transition was found; otherwise, nil.
+func SendEventToWorkflowInstance(id string, event string) (newState string, err error) {
+	return Dispatch(context.Background(), id, event)
+}
+
+// processEvent performs one FSM step for instance id. It is only ever invoked
+// from an instanceActor goroutine, so all events for a single instance are
+// serialized here — eliminating the read-modify-write race the old inline
+// handler had. The row read + write run in one transaction (atomic, and the
+// seam for row locking if this ever needs to scale past one process), and the
+// resulting state is published to the event bus after a successful commit.
+func processEvent(ctx context.Context, id string, event string) (newState string, err error) {
+	db := store.DB().WithContext(ctx)
+	var wf persistence.WorkflowInstance
+	var justCompleted bool
+	var moved bool
+
+	defer func() {
+		if err == nil {
+			// Arm do-activity/timers only for the state the transaction
+			// actually committed. applyTransition stops the departing
+			// state's inline (harmless under rollback) but deliberately
+			// leaves the start side to here — see armStateActivities.
+			if moved {
+				armStateActivities(id, &wf, wf.ContextMap)
+			}
+			publishTransition(id, event, wf)
+			// Notify the parent's actor in its own goroutine — DispatchAsync
+			// can block if the parent's mailbox is momentarily full, and this
+			// runs after the transaction above has already committed (no lock
+			// held), so a slow/full parent mailbox can never stall this
+			// instance's own actor loop.
+			if justCompleted && wf.ParentId != nil {
+				// Tracked by inflight for its whole lifetime: attemptAutoJoin
+				// itself calls DispatchAsync -> enqueue -> inflight.Add(1), and
+				// a positive Add that starts once the counter has hit zero must
+				// not race a returning Drain()/Wait(). Add here, Done inside.
+				inflight.Add(1)
+				go attemptAutoJoin(wf.ParentId.String())
+			}
+		}
+	}()
+
+	txErr := db.Transaction(func(tx *gorm.DB) error {
+		if result := tx.First(&wf, "id = ?", id); result.Error != nil {
+			return result.Error
+		}
+		wasComplete := wf.Complete
+
+		golog.Info("Sending event [{}] to workflow instance [{}] in state [{}]", event, id, wf.CurrentState.State.GetId())
+
+		ctxMap := wf.ContextMap
+		if ctxMap == nil {
+			ctxMap = make(map[string]string)
+		}
+
+		transition, found := findCandidateTransition(&wf, event, ctxMap)
+		if !found {
+			return &errors.NoTransitionError{CurrentState: wf.CurrentState.State.GetId(), Event: event}
+		}
+
+		if transition.IsJoin() {
+			complete, joinErr := allChildrenComplete(ctx, id, wf.PendingForkGeneration)
+			if joinErr != nil {
+				return joinErr
+			}
+			if !complete {
+				return &errors.ChildrenNotCompleteError{CurrentState: wf.CurrentState.State.GetId(), Event: event}
+			}
+		}
+
+		var aerr error
+		var applyMoved, chainMoved bool
+		ctxMap, applyMoved, aerr = applyTransition(ctx, id, &wf, transition, ctxMap)
+		if aerr != nil {
+			return aerr
+		}
+
+		ctxMap, chainMoved, aerr = runAutomaticChain(ctx, id, &wf, ctxMap)
+		if aerr != nil {
+			return aerr
+		}
+		moved = applyMoved || chainMoved
+
+		wf.ContextMap = ctxMap
+		wf.Complete = isEndState(wf)
+		wf.Version++
+		justCompleted = !wasComplete && wf.Complete
+
+		if result := tx.Save(&wf); result.Error != nil {
+			return result.Error
+		}
+		return nil
+	})
+	if txErr != nil {
+		return "", txErr
+	}
+
+	golog.Info("Workflow instance [{}] transitioned to state [{}]", id, wf.CurrentState.State.GetId())
+	return wf.CurrentState.State.GetId(), nil
+}
+
+// possibleEventsFor lists every event that would actually succeed if sent
+// right now: USER/SYSTEM-triggered (not AUTOMATIC — those fire
+// themselves), guard-passing, from wf's current effective position
+// (substate-local events first, matching findCandidateTransition's own
+// scoping), plus any matching CommonTransitions.
+func possibleEventsFor(wf *persistence.WorkflowInstance, ctxMap map[string]string) []string {
+	cs := wf.CurrentState
+	var events []string
+	collect := func(transitions []model.Transition, sourceId string) {
+		for _, t := range transitions {
+			if t.Source != sourceId || t.Trigger == model.AutomaticTrigger {
+				continue
+			}
+			if !t.Guard.Evaluate(ctxMap) {
+				continue
+			}
+			events = append(events, t.Event)
+		}
+	}
+	if cs.Substate != nil {
+		if comp, ok := cs.State.(*model.CompositeState); ok {
+			collect(comp.SubTransitions, cs.Substate.GetId())
+		}
+	}
+	collect(wf.WorkflowDefinition.Transitions, cs.State.GetId())
+	for _, ct := range wf.WorkflowDefinition.CommonTransitions {
+		if ct.Trigger == model.AutomaticTrigger || !ct.Guard.Evaluate(ctxMap) {
+			continue
+		}
+		for _, s := range ct.SourceList {
+			if s == cs.State.GetId() {
+				events = append(events, ct.Event)
+				break
+			}
+		}
+	}
+	return events
+}
+
+func GetPossibleEventsForWorkflowInstance(id string) ([]string, error) {
+	db := store.DB()
+	var wf persistence.WorkflowInstance
+	if result := db.First(&wf, "id = ?", id); result.Error != nil {
+		return nil, result.Error
+	}
+	golog.Info("Getting possible events for workflow instance [{}] in state [{}]", id, wf.CurrentState.EffectiveId())
+	return possibleEventsFor(&wf, wf.ContextMap), nil
+}

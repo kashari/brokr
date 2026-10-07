@@ -1,0 +1,17 @@
+{
+  "id": "order-lifecycle",
+  "endStates": ["delivered", "cancelled"],
+  "states": [
+    { "id": "created" },
+    { "id": "paid" },
+    { "id": "shipped" },
+    { "id": "delivered" },
+    { "id": "cancelled" }
+  ],
+  "transitions": [
+    { "source": "created", "target": "paid",      "event": "pay" },
+    { "source": "paid",    "target": "shipped",   "event": "ship" },
+    { "source": "shipped", "target": "delivered", "event": "deliver" },
+    { "source": "created", "target": "cancelled", "event": "cancel" }
+  ]
+}

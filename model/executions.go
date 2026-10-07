@@ -1,0 +1,132 @@
+package model
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// httpClient is shared across all outbound HTTP actions so connections are
+// reused (tuned Transport) and a hung downstream can't pin an actor/worker
+// goroutine forever (Timeout). Replaces http.DefaultClient, which had neither.
+var httpClient = &http.Client{
+	Timeout: envDuration("BROKR_HTTP_TIMEOUT_SEC", 30*time.Second),
+	Transport: &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
+func executeHttpRequestAction(ctx context.Context, a *Action, ctxMap map[string]string, authToken string) (map[string]string, error) {
+	url := interpolate(a.Url, ctxMap)
+
+	var body io.Reader
+	if len(a.Variables) > 0 {
+		interpolated := make(map[string]string, len(a.Variables))
+		for k, v := range a.Variables {
+			interpolated[k] = interpolate(v, ctxMap)
+		}
+		b, err := json.Marshal(interpolated)
+		if err != nil {
+			return ctxMap, fmt.Errorf("marshal action body: %w", err)
+		}
+		body = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, a.Method, url, body)
+	if err != nil {
+		return ctxMap, fmt.Errorf("build HTTP request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if a.ForwardToken && authToken != "" {
+		req.Header.Set("Authorization", authToken)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return ctxMap, fmt.Errorf("HTTP action %s %s: %w", a.Method, url, err)
+	}
+	defer resp.Body.Close()
+
+	if a.ExpectResponse && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		return ctxMap, fmt.Errorf("HTTP action %s %s returned %d", a.Method, url, resp.StatusCode)
+	}
+
+	if a.ExpectResponse {
+		var responseMap map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&responseMap); err == nil {
+			for k, v := range responseMap {
+				ctxMap[k] = v
+			}
+		}
+	}
+
+	return ctxMap, nil
+}
+
+func envDuration(key string, defaultValue time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultValue
+}
+
+// interpolate replaces ${varName} placeholders in s with values from ctxMap.
+func interpolate(s string, ctxMap map[string]string) string {
+	for k, v := range ctxMap {
+		s = strings.ReplaceAll(s, "${"+k+"}", v)
+	}
+	return s
+}
+
+// copyContext returns a shallow copy of ctxMap, so an action running in its
+// own goroutine can read/interpolate from it without racing the caller's map.
+func copyContext(ctxMap map[string]string) map[string]string {
+	snapshot := make(map[string]string, len(ctxMap))
+	for k, v := range ctxMap {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
+func executeSetContextMapAction(a *Action, ctxMap map[string]string) (map[string]string, error) {
+	for k, v := range a.Variables {
+		ctxMap[k] = interpolate(v, ctxMap)
+	}
+	return ctxMap, nil
+}
+
+// executeCreateChildAction spawns a child workflow instance under parentId
+// using a.ChildWorkflow, via the CreateChildWorkflowFunc hook engine wires
+// up. The new child's id is stashed in ctxMap["childWorkflowId"] (if more
+// than one CreateChildWorkflowAction runs in the same batch, later ones
+// overwrite this key).
+func executeCreateChildAction(a *Action, ctxMap map[string]string, parentId string) (map[string]string, error) {
+	if CreateChildWorkflowFunc == nil {
+		return ctxMap, fmt.Errorf("CreateChildWorkflowAction: child workflow creation is not wired up")
+	}
+	if a.ChildWorkflow == nil {
+		return ctxMap, fmt.Errorf("CreateChildWorkflowAction: childWorkflow is required")
+	}
+	childId, err := CreateChildWorkflowFunc(parentId, *a.ChildWorkflow)
+	if err != nil {
+		return ctxMap, fmt.Errorf("create child workflow: %w", err)
+	}
+	if ctxMap == nil {
+		ctxMap = make(map[string]string)
+	}
+	ctxMap["childWorkflowId"] = childId
+	return ctxMap, nil
+}

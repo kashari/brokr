@@ -1,0 +1,179 @@
+package web
+
+import (
+	"net/http"
+
+	"github.com/kashari/brokr/dto"
+	"github.com/kashari/brokr/engine"
+	"github.com/kashari/brokr/errors"
+	"github.com/kashari/brokr/model"
+	"github.com/kashari/draupnir"
+)
+
+func errResp(msg string) map[string]string {
+	return map[string]string{"error": msg}
+}
+
+// HTTP
+
+func CreateBlueprint(ctx *draupnir.Context) {
+	var req dto.CreateInstanceRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errResp("invalid JSON: "+err.Error()))
+		return
+	}
+	if req.Name == "" {
+		ctx.JSON(http.StatusBadRequest, errResp("name is required"))
+		return
+	}
+	id, err := engine.NewWorkflowInstanceByName(req.Name)
+	if err != nil {
+		if _, notFound := err.(*errors.WorkflowDefinitionNotFoundError); notFound {
+			ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusCreated, map[string]string{"id": id.String()})
+}
+
+func GetBlueprint(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	wf, err := engine.GetWorkflowInstance(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, wf)
+}
+
+func SendEventToInstance(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	event := ctx.Query("event")
+
+	// ?async=true enqueues the event and returns 202 immediately; the caller
+	// observes the resulting transition on the SSE stream. Default is the
+	// synchronous path, which blocks until the transition completes.
+	if async, _ := ctx.QueryBool("async"); async {
+		if err := engine.DispatchAsync(id, event); err != nil {
+			ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+			return
+		}
+		ctx.JSON(http.StatusAccepted, map[string]string{"status": "accepted", "id": id, "event": event})
+		return
+	}
+
+	newState, err := engine.Dispatch(ctx.RequestContext(), id, event)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, newState)
+}
+
+func GetPossibleEvents(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	events, err := engine.GetPossibleEventsForWorkflowInstance(id)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, events)
+}
+
+// GetContext returns the current ${var} interpolation context for
+// workflow instance :id — primarily a debugging/inspection aid now that
+// ContextMap survives across transitions (see Task 2).
+func GetContext(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	wf, err := engine.GetWorkflowInstanceRaw(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, wf.ContextMap)
+}
+
+// CreateChildBlueprint creates a new workflow instance as a child of :id.
+func CreateChildBlueprint(ctx *draupnir.Context) {
+	parentId := ctx.Param("id")
+	var bp model.Workflow
+	if err := ctx.BindJSON(&bp); err != nil {
+		ctx.JSON(http.StatusBadRequest, errResp("invalid JSON: "+err.Error()))
+		return
+	}
+	id, err := engine.CreateChildWorkflowInstance(parentId, bp)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusCreated, map[string]string{"id": id.String()})
+}
+
+// GetChildren lists the (non-withdrawn) children of workflow instance :id.
+func GetChildren(ctx *draupnir.Context) {
+	parentId := ctx.Param("id")
+	children, err := engine.GetChildWorkflowInstances(parentId)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, children)
+}
+
+// WithdrawChild soft-deletes child :childId of workflow instance :id.
+func WithdrawChild(ctx *draupnir.Context) {
+	parentId := ctx.Param("id")
+	childId := ctx.Param("childId")
+	if err := engine.WithdrawChildWorkflowInstance(parentId, childId); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]string{"withdrawn": childId})
+}
+
+// StreamWorkflowInstanceEvents streams every transition event for one workflow
+// instance as Server-Sent Events until the client disconnects. This mirrors
+// draupnir's Router.EVENTSTREAM loop, but the topic is resolved per-request
+// from :id instead of being fixed at route-registration time.
+func StreamWorkflowInstanceEvents(ctx *draupnir.Context, stream *draupnir.SSEStream) {
+	id := ctx.Param("id")
+	sub := engine.EventBus.Subscribe(id)
+	defer engine.EventBus.Unsubscribe(sub)
+
+	done := stream.Done()
+	for {
+		select {
+		case <-done:
+			return
+		case ev, ok := <-sub.C:
+			if !ok {
+				return
+			}
+			if err := stream.Send(ev); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// GetVisualizationData returns the full visualizer payload for workflow
+// instance :id — its own summary, its definition's analyzed graph, its
+// recorded journey, and the events it could accept right now.
+func GetVisualizationData(ctx *draupnir.Context) {
+	id := ctx.Param("id")
+	data, err := engine.GetVisualizationData(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, errResp(err.Error()))
+		return
+	}
+	ctx.JSON(http.StatusOK, data)
+}
+
+// GetVisualizerPage serves the single-file React visualizer app. The
+// instance id is read client-side from the URL path — every instance gets
+// the same static HTML, which then fetches GetVisualizationData for its id.
+func GetVisualizerPage(ctx *draupnir.Context) {
+	ctx.HTML(http.StatusOK, visualizerHTML)
+}
